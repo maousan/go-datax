@@ -1,5 +1,6 @@
-import { Card, Input, Select, Space, Table } from 'antd'
+import { Card, DatePicker, Select, Space, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import type { Dayjs } from 'dayjs'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useRuns, type Run, type RunFilters } from '../api/runs'
@@ -16,8 +17,7 @@ const STATUS_OPTIONS = [
 
 export default function RunsPage() {
   const [filters, setFilters] = useState<RunFilters>({ page: 1, pageSize: 20 })
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
   const runsQuery = useRuns(filters)
   const jobsQuery = useSyncJobs('')
 
@@ -85,32 +85,22 @@ export default function RunsPage() {
           value={filters.jobId}
           onChange={(value) => setFilters({ ...filters, jobId: value, page: 1 })}
         />
-        <Input
-          type="date"
-          aria-label="开始日期"
-          value={fromDate}
-          onChange={(event) => {
-            const value = event.target.value
-            setFromDate(value)
-            setFilters({
-              ...filters,
-              from: value ? new Date(`${value}T00:00:00`).toISOString() : undefined,
-              page: 1,
-            })
-          }}
-        />
-        <Input
-          type="date"
-          aria-label="结束日期"
-          value={toDate}
-          onChange={(event) => {
-            const value = event.target.value
-            setToDate(value)
-            setFilters({
-              ...filters,
-              to: value ? new Date(`${value}T23:59:59`).toISOString() : undefined,
-              page: 1,
-            })
+        <DatePicker.RangePicker
+          value={range}
+          placeholder={['开始日期', '结束日期']}
+          onChange={(dates) => {
+            if (dates && dates[0] && dates[1]) {
+              setRange([dates[0], dates[1]])
+              setFilters({
+                ...filters,
+                from: dates[0].startOf('day').toISOString(),
+                to: dates[1].endOf('day').toISOString(),
+                page: 1,
+              })
+            } else {
+              setRange(null)
+              setFilters({ ...filters, from: undefined, to: undefined, page: 1 })
+            }
           }}
         />
       </Space>
