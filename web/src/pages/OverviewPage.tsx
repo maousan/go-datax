@@ -1,7 +1,7 @@
 import { Card, Col, Row, Statistic, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { Link } from 'react-router'
 import { useOverview, type Run } from '../api/runs'
+import RunDetailLink from '../components/RunDetailLink'
 import RunStatusTag from '../components/RunStatusTag'
 import { formatDuration, formatTime } from '../utils/format'
 
@@ -31,8 +31,8 @@ const columns: ColumnsType<Run> = [
   {
     title: '操作',
     key: 'actions',
-    width: 90,
-    render: (_, run) => <Link to={`/runs/${run.id}`}>详情</Link>,
+    width: 110,
+    render: (_, run) => <RunDetailLink runId={run.id} />,
   },
 ]
 

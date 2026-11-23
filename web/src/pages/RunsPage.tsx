@@ -2,9 +2,9 @@ import { Card, DatePicker, Select, Space, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { Dayjs } from 'dayjs'
 import { useState } from 'react'
-import { Link } from 'react-router'
 import { useRuns, type Run, type RunFilters } from '../api/runs'
 import { useSyncJobs } from '../api/syncJobs'
+import RunDetailLink from '../components/RunDetailLink'
 import RunStatusTag from '../components/RunStatusTag'
 import { formatDuration, formatTime } from '../utils/format'
 
@@ -59,8 +59,8 @@ export default function RunsPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 90,
-      render: (_, run) => <Link to={`/runs/${run.id}`}>详情</Link>,
+      width: 110,
+      render: (_, run) => <RunDetailLink runId={run.id} />,
     },
   ]
 

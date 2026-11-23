@@ -2,7 +2,7 @@ import { ArrowLeftOutlined, DownloadOutlined, StopOutlined } from '@ant-design/i
 import { Alert, Button, Card, Descriptions, Space, Spin, Typography } from 'antd'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import {
   downloadRunArtifact,
   streamRunLogs,
@@ -25,6 +25,7 @@ export default function RunDetailPage() {
 
 function RunDetailView({ runId }: { runId: number }) {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const runQuery = useRun(runId)
   const cancelMutation = useCancelRun()
 
@@ -99,9 +100,14 @@ function RunDetailView({ runId }: { runId: number }) {
       <Card
         title={
           <Space>
-            <Link to="/runs">
-              <ArrowLeftOutlined /> 返回
-            </Link>
+            <Button
+              type="text"
+              icon={<ArrowLeftOutlined />}
+              style={{ paddingInline: 0 }}
+              onClick={() => navigate('/runs')}
+            >
+              返回
+            </Button>
             <Typography.Text>运行 #{runId}</Typography.Text>
             {run ? <RunStatusTag status={run.status} /> : null}
           </Space>
