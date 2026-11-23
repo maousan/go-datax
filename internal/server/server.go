@@ -80,6 +80,11 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/data-sources/{id}", s.handleGetDataSource)
 	protected.HandleFunc("PUT /api/v1/data-sources/{id}", s.handleUpdateDataSource)
 	protected.HandleFunc("DELETE /api/v1/data-sources/{id}", s.handleDeleteDataSource)
+	protected.HandleFunc("GET /api/v1/data-sources/{id}/schemas", s.handleDataSourceSchemas)
+	protected.HandleFunc("GET /api/v1/data-sources/{id}/tables", s.handleDataSourceTables)
+	protected.HandleFunc("GET /api/v1/data-sources/{id}/columns", s.handleDataSourceColumns)
+	protected.HandleFunc("GET /api/v1/data-sources/{id}/rows", s.handleDataSourceRows)
+	protected.HandleFunc("POST /api/v1/data-sources/{id}/query", s.handleDataSourceQuery)
 
 	protected.HandleFunc("GET /api/v1/sync-jobs", s.handleListSyncJobs)
 	protected.HandleFunc("POST /api/v1/sync-jobs", s.handleCreateSyncJob)

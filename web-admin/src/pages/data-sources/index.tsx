@@ -6,25 +6,28 @@ import {
   Form,
   Grid,
   Input,
+  Link,
   Message,
   Modal,
   Popconfirm,
   Select,
   Space,
   Table,
+  Tooltip,
   Typography,
 } from '@arco-design/web-react'
 import type { TableColumnProps } from '@arco-design/web-react'
 import {
   IconDelete,
   IconEdit,
+  IconEye,
   IconPlus,
   IconRefresh,
   IconSearch,
   IconSync,
 } from '@arco-design/web-react/icon'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import {
   testDataSource,
@@ -69,6 +72,7 @@ function testFailure(err: unknown): ConnectionTestResult {
 }
 
 export default function DataSourcesPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [modalOpen, setModalOpen] = useState(searchParams.get('action') === 'create')
@@ -206,7 +210,15 @@ export default function DataSourcesPage() {
   }
 
   const columns: TableColumnProps<DataSource>[] = [
-    { title: '名称', dataIndex: 'name', width: 130, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 130,
+      ellipsis: true,
+      render: (value: string, item) => (
+        <Link onClick={() => navigate(`/data-sources/${item.id}`)}>{value}</Link>
+      ),
+    },
     {
       title: '类型',
       dataIndex: 'type',
@@ -229,32 +241,45 @@ export default function DataSourcesPage() {
     },
     {
       title: '操作',
-      width: 255,
+      width: 180,
       render: (_, item) => (
-        <Space size={4}>
-          <Button type="text" size="small" icon={<IconSync />} onClick={() => testSaved(item)}>
-            测试
-          </Button>
-          <Button type="text" size="small" icon={<IconEdit />} onClick={() => openEdit(item)}>
-            编辑
-          </Button>
-          <Popconfirm
-            content="确认删除该数据源？"
-            okText="确定"
-            cancelText="取消"
-            onOk={async () => {
-              setPageError('')
-              try {
-                await deleteMutation.mutateAsync(item.id)
-              } catch (err) {
-                setPageError(err instanceof ApiError ? err.message : '删除失败，请稍后重试')
-              }
-            }}
-          >
-            <Button type="text" status="danger" size="small" icon={<IconDelete />}>
-              删除
-            </Button>
-          </Popconfirm>
+        <Space size={2}>
+          <Tooltip content="详情">
+            <Button
+              type="text"
+              size="small"
+              icon={<IconEye />}
+              onClick={() => navigate(`/data-sources/${item.id}`)}
+            />
+          </Tooltip>
+          <Tooltip content="测试连接">
+            <Button
+              type="text"
+              size="small"
+              icon={<IconSync />}
+              onClick={() => testSaved(item)}
+            />
+          </Tooltip>
+          <Tooltip content="编辑">
+            <Button type="text" size="small" icon={<IconEdit />} onClick={() => openEdit(item)} />
+          </Tooltip>
+          <Tooltip content="删除">
+            <Popconfirm
+              content="确认删除该数据源？"
+              okText="确定"
+              cancelText="取消"
+              onOk={async () => {
+                setPageError('')
+                try {
+                  await deleteMutation.mutateAsync(item.id)
+                } catch (err) {
+                  setPageError(err instanceof ApiError ? err.message : '删除失败，请稍后重试')
+                }
+              }}
+            >
+              <Button type="text" status="danger" size="small" icon={<IconDelete />} />
+            </Popconfirm>
+          </Tooltip>
         </Space>
       ),
     },

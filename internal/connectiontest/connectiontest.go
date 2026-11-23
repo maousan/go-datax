@@ -37,21 +37,31 @@ type Result struct {
 	Version   string
 }
 
-// Test 建立连接并执行 SELECT 1。
-func Test(ctx context.Context, params Params) Result {
-	start := time.Now()
-
+// Open 按数据源参数创建数据库连接。调用方负责关闭返回的 *sql.DB。
+func Open(params Params) (*sql.DB, string, error) {
 	driver, dsn, err := buildDSN(params)
 	if err != nil {
-		return Result{Message: err.Error()}
+		return nil, "", err
 	}
 
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
+		return nil, "", err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	return db, driver, nil
+}
+
+// Test 建立连接并执行 SELECT 1。
+func Test(ctx context.Context, params Params) Result {
+	start := time.Now()
+
+	db, driver, err := Open(params)
+	if err != nil {
 		return Result{Message: err.Error()}
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 
 	ctx, cancel := context.WithTimeout(ctx, testTimeout)
 	defer cancel()

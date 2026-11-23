@@ -46,6 +46,14 @@ export function useDataSources(query: string) {
   })
 }
 
+export function useDataSource(id: number) {
+  return useQuery({
+    queryKey: ['data-sources', 'detail', id],
+    queryFn: () => apiGet<DataSource>(`/api/v1/data-sources/${id}`),
+    enabled: Number.isFinite(id) && id > 0,
+  })
+}
+
 function useInvalidateDataSources() {
   const queryClient = useQueryClient()
   return () => queryClient.invalidateQueries({ queryKey: ['data-sources'] })

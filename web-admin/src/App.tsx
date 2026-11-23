@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router'
 import RequireAuth from './auth/RequireAuth'
 import AppLayout from './layout/AppLayout'
+import DataSourceDetailPage from './pages/data-sources/detail'
 import DataSourcesPage from './pages/data-sources'
 import LoginPage from './pages/login'
 import OverviewPage from './pages/overview'
@@ -22,6 +23,7 @@ export default function App() {
       >
         <Route index element={<OverviewPage />} />
         <Route path="data-sources" element={<DataSourcesPage />} />
+        <Route path="data-sources/:id" element={<DataSourceDetailPage />} />
         <Route path="sync-jobs" element={<SyncJobsPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />

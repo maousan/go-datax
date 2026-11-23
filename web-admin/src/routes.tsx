@@ -75,6 +75,7 @@ function findGroup(pathname: string, routes: MenuRoute[] = menuRoutes): MenuRout
 }
 
 export function breadcrumbFor(pathname: string): string[] {
+  if (pathname.startsWith('/data-sources/')) return ['数据管理', '数据源', '数据源详情']
   if (pathname.startsWith('/runs/')) return ['运行中心', '运行历史', '运行详情']
   const groups = findGroup(pathname)
   const leaf = flattenMenuRoutes().find((route) => route.path === pathname)
