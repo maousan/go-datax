@@ -39,6 +39,9 @@ func TestSQLiteConnectionSucceeds(t *testing.T) {
 	if result.LatencyMs < 0 {
 		t.Errorf("latency = %d, want >= 0", result.LatencyMs)
 	}
+	if result.Version == "" {
+		t.Error("expected sqlite version to be reported")
+	}
 }
 
 func TestSQLiteConnectionTestDoesNotCreateFiles(t *testing.T) {

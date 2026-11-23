@@ -623,6 +623,35 @@ func TestBlankPasswordSurvivesUpdate(t *testing.T) {
 	}
 }
 
+func TestConnectionTestStoresVersionWithoutTouchingUpdatedAt(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+	dbPath := filepath.Join(t.TempDir(), "version.db")
+	createSQLiteDB(t, dbPath)
+	created := createDataSource(t, handler, token, "versioned", "sqlite", "jdbc:sqlite:"+dbPath, "", "")
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"id": created.ID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/data-sources/"+itoa(created.ID), token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d", rec.Code)
+	}
+	updated := decodeDataSource(t, rec)
+	if updated.Version == "" {
+		t.Error("expected version to be stored after a successful connection test")
+	}
+	if updated.UpdatedAt != created.UpdatedAt {
+		t.Errorf("updatedAt changed: %s -> %s", created.UpdatedAt, updated.UpdatedAt)
+	}
+}
+
 func TestMergeDataSourceKeepsPasswordWhenBlankOrMasked(t *testing.T) {
 	existing := store.DataSource{
 		Name:     "a",

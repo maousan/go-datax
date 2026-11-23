@@ -10,6 +10,7 @@ export interface DataSource {
   jdbcUrl: string
   username: string
   password: string
+  version: string
   properties: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -28,6 +29,7 @@ export interface ConnectionTestResult {
   ok: boolean
   latencyMs: number
   message: string
+  version?: string
 }
 
 export type ConnectionTestInput = DataSourceInput | { id: number }

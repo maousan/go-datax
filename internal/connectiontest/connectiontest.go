@@ -34,6 +34,7 @@ type Result struct {
 	OK        bool
 	LatencyMs int64
 	Message   string
+	Version   string
 }
 
 // Test 建立连接并执行 SELECT 1。
@@ -72,7 +73,33 @@ func Test(ctx context.Context, params Params) Result {
 		OK:        true,
 		LatencyMs: time.Since(start).Milliseconds(),
 		Message:   "连接成功",
+		Version:   queryVersion(ctx, db, driver),
 	}
+}
+
+// queryVersion 尽力获取数据库版本；失败时返回空字符串，不影响连接结论。
+func queryVersion(ctx context.Context, db *sql.DB, driver string) string {
+	var query string
+	switch driver {
+	case "mysql":
+		query = "SELECT VERSION()"
+	case "pgx":
+		query = "SELECT version()"
+	case "sqlite":
+		query = "SELECT sqlite_version()"
+	case "sqlserver":
+		query = "SELECT @@VERSION"
+	case "oracle":
+		query = "SELECT banner FROM v$version WHERE ROWNUM = 1"
+	default:
+		return ""
+	}
+
+	var version sql.NullString
+	if err := db.QueryRowContext(ctx, query).Scan(&version); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(version.String)
 }
 
 func buildDSN(params Params) (string, string, error) {

@@ -6,7 +6,7 @@
 
 **Status:** done
 
-- [x] 列表展示名称、类型、JDBC 地址与更新时间，并可按名称搜索
+- [x] 列表展示名称、类型、JDBC 地址、数据库版本号与创建时间，并可按名称搜索
 - [x] 可创建 MySQL、PostgreSQL、SQLite、SQL Server 与 Oracle 类型的 DataSource，必填字段有中文校验提示
 - [x] SQL Server 同时接受 `jdbc:sqlserver://` 与 `jdbc:jtds:sqlserver://` 两种连接地址
 - [x] Oracle 接受 `jdbc:oracle:thin:@host:port/service`、`@//host:port/service`、`@host:port:SID` 与 `oracle://` 形式

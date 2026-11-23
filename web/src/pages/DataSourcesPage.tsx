@@ -189,20 +189,28 @@ export default function DataSourcesPage() {
   }
 
   const columns: ColumnsType<DataSource> = [
-    { title: '名称', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 160, ellipsis: true },
     {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
-      width: 120,
+      width: 110,
       render: (value: DataSourceType) => TYPE_LABELS[value] ?? value,
     },
     { title: '连接地址', dataIndex: 'jdbcUrl', key: 'jdbcUrl', ellipsis: true },
     {
-      title: '更新时间',
-      dataIndex: 'updatedAt',
-      key: 'updatedAt',
+      title: '版本号',
+      dataIndex: 'version',
+      key: 'version',
       width: 180,
+      ellipsis: true,
+      render: (value: string) => value || '-',
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      width: 170,
       render: (value: string) => formatTime(value),
     },
     {

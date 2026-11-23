@@ -14,6 +14,7 @@ const sample: DataSource = {
   jdbcUrl: 'jdbc:mysql://localhost/app',
   username: 'root',
   password: '******',
+  version: '8.0.33',
   properties: { key: 'warehouse' },
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-02T00:00:00Z',

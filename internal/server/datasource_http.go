@@ -40,6 +40,7 @@ type dataSourceResponse struct {
 	JDBCUrl    string            `json:"jdbcUrl"`
 	Username   string            `json:"username"`
 	Password   string            `json:"password"`
+	Version    string            `json:"version"`
 	Properties map[string]string `json:"properties"`
 	CreatedAt  string            `json:"createdAt"`
 	UpdatedAt  string            `json:"updatedAt"`
@@ -243,6 +244,7 @@ func toDataSourceResponse(ds store.DataSource) dataSourceResponse {
 		JDBCUrl:    ds.JDBCUrl,
 		Username:   ds.Username,
 		Password:   maskedPassword,
+		Version:    ds.Version,
 		Properties: ds.Properties,
 		CreatedAt:  ds.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:  ds.UpdatedAt.UTC().Format(time.RFC3339),
@@ -384,10 +386,16 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := connectiontest.Test(r.Context(), params)
+	if result.OK && req.ID > 0 && result.Version != "" {
+		// 只刷新版本号元数据，不改变 updated_at。
+		_ = s.dataStore.UpdateDataSourceVersion(req.ID, result.Version)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        result.OK,
 		"latencyMs": result.LatencyMs,
 		"message":   result.Message,
+		"version":   result.Version,
 	})
 }
 

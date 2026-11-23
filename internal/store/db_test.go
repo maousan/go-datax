@@ -159,6 +159,30 @@ func TestListRunsForPrune(t *testing.T) {
 	}
 }
 
+func TestUpdateDataSourceVersionKeepsUpdatedAt(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "admin.db"))
+	ds := &DataSource{Name: "versioned", Type: "sqlite", JDBCUrl: "jdbc:sqlite:/tmp/v.db"}
+	if err := s.CreateDataSource(ds); err != nil {
+		t.Fatalf("CreateDataSource() failed: %v", err)
+	}
+	before := ds.UpdatedAt
+
+	if err := s.UpdateDataSourceVersion(ds.ID, "3.42.0"); err != nil {
+		t.Fatalf("UpdateDataSourceVersion() failed: %v", err)
+	}
+
+	loaded, err := s.GetDataSource(ds.ID)
+	if err != nil {
+		t.Fatalf("GetDataSource() failed: %v", err)
+	}
+	if loaded.Version != "3.42.0" {
+		t.Errorf("version = %q, want 3.42.0", loaded.Version)
+	}
+	if !loaded.UpdatedAt.Equal(before) {
+		t.Errorf("updatedAt changed: %v -> %v", before, loaded.UpdatedAt)
+	}
+}
+
 func TestDataSourcePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "admin.db")
 

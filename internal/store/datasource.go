@@ -69,6 +69,7 @@ type DataSource struct {
 	JDBCUrl    string    `gorm:"column:jdbc_url;size:500;not null"`
 	Username   string    `gorm:"size:200"`
 	Password   string    `gorm:"size:500"`
+	Version    string    `gorm:"size:500"`
 	Properties StringMap `gorm:"type:text"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -109,6 +110,13 @@ func (s *Store) CountDataSources() (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// UpdateDataSourceVersion 只更新版本号，不改变 updated_at。
+func (s *Store) UpdateDataSourceVersion(id int64, version string) error {
+	return s.db.Model(&DataSource{}).
+		Where("id = ?", id).
+		UpdateColumn("version", version).Error
 }
 
 // CreateDataSource 创建数据源，名称冲突时返回 ErrDuplicateDataSourceName。
