@@ -19,8 +19,8 @@ const SubMenu = Menu.SubMenu
 
 function renderMenuRoutes(routes: MenuRoute[]) {
   return routes.map((route) => {
+    const Icon = route.icon
     if (route.children?.length) {
-      const Icon = route.icon
       return (
         <SubMenu
           key={route.key}
@@ -34,7 +34,17 @@ function renderMenuRoutes(routes: MenuRoute[]) {
         </SubMenu>
       )
     }
-    return <MenuItem key={route.path ?? route.key}>{route.name}</MenuItem>
+    return (
+      <MenuItem key={route.path ?? route.key}>
+        {Icon ? (
+          <>
+            <Icon className={styles.icon} /> {route.name}
+          </>
+        ) : (
+          route.name
+        )}
+      </MenuItem>
+    )
   })
 }
 
