@@ -6,6 +6,7 @@ import {
   Grid,
   Input,
   InputNumber,
+  Link,
   Modal,
   Popconfirm,
   Select,
@@ -28,7 +29,7 @@ import {
   IconSearch,
   IconUpload,
 } from '@arco-design/web-react/icon'
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import { useDataSources } from '../../api/dataSources'
@@ -46,6 +47,7 @@ import {
   type SyncJobInput,
 } from '../../api/syncJobs'
 import JsonEditor from '../../components/JsonEditor'
+import RunStatusTag from '../../components/RunStatusTag'
 import listStyles from '../../style/list.module.less'
 import { downloadJSON, formatTime } from '../../utils/format'
 
@@ -64,6 +66,8 @@ interface JobFormValues {
   channel?: number
   errorLimitRecord?: number
   errorLimitPercentage?: number
+  retryMax?: number
+  retryIntervalSeconds?: number
 }
 
 const MODE_LABELS: Record<AuthoringMode, string> = {
@@ -147,45 +151,64 @@ export default function SyncJobsPage() {
       channel: 1,
       errorLimitRecord: 0,
       errorLimitPercentage: 0,
+      retryMax: 0,
+      retryIntervalSeconds: 60,
     })
     setModalOpen(true)
   }
 
-  const openEdit = (job: SyncJob) => {
-    setEditing(job)
-    setMode(job.authoringMode)
-    setFormError('')
-    form.resetFields()
+  const openEdit = useCallback(
+    (job: SyncJob) => {
+      setEditing(job)
+      setMode(job.authoringMode)
+      setFormError('')
+      form.resetFields()
 
-    if (job.authoringMode === 'form' && job.form) {
+      if (job.authoringMode === 'form' && job.form) {
+        form.setFieldsValue({
+          name: job.name,
+          authoringMode: 'form',
+          readerDataSourceId: job.form.reader.dataSourceId,
+          readerTable: job.form.reader.table,
+          readerColumns: job.form.reader.column.join(', '),
+          readerWhere: job.form.reader.where,
+          readerSplitPk: job.form.reader.splitPk,
+          writerDataSourceId: job.form.writer.dataSourceId,
+          writerTable: job.form.writer.table,
+          writerColumns: job.form.writer.column.join(', '),
+          writerWriteMode: job.form.writer.writeMode || 'insert',
+          channel: job.form.setting.channel,
+          errorLimitRecord: job.form.setting.errorLimit.record,
+          errorLimitPercentage: job.form.setting.errorLimit.percentage,
+        })
+        setRawText('')
+      } else {
+        form.setFieldsValue({ name: job.name, authoringMode: 'raw' })
+        setRawText(JSON.stringify(job.raw ?? {}, null, 2))
+      }
       form.setFieldsValue({
-        name: job.name,
-        authoringMode: 'form',
-        readerDataSourceId: job.form.reader.dataSourceId,
-        readerTable: job.form.reader.table,
-        readerColumns: job.form.reader.column.join(', '),
-        readerWhere: job.form.reader.where,
-        readerSplitPk: job.form.reader.splitPk,
-        writerDataSourceId: job.form.writer.dataSourceId,
-        writerTable: job.form.writer.table,
-        writerColumns: job.form.writer.column.join(', '),
-        writerWriteMode: job.form.writer.writeMode || 'insert',
-        channel: job.form.setting.channel,
-        errorLimitRecord: job.form.setting.errorLimit.record,
-        errorLimitPercentage: job.form.setting.errorLimit.percentage,
+        retryMax: job.retryMax ?? 0,
+        retryIntervalSeconds: job.retryIntervalSeconds || 60,
       })
-      setRawText('')
-    } else {
-      form.setFieldsValue({ name: job.name, authoringMode: 'raw' })
-      setRawText(JSON.stringify(job.raw ?? {}, null, 2))
-    }
-    setModalOpen(true)
-  }
+      setModalOpen(true)
+    },
+    [form],
+  )
+
+  const editID = Number(searchParams.get('edit') ?? 0)
+  useEffect(() => {
+    if (!Number.isFinite(editID) || editID <= 0 || modalOpen) return
+    const job = jobsQuery.data?.find((item) => item.id === editID)
+    // 从任务详情页带 ?edit= 返回时，等列表加载完再打开编辑弹窗。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (job) openEdit(job)
+  }, [editID, jobsQuery.data, modalOpen, openEdit])
 
   const clearAction = () => {
-    if (!searchParams.has('action')) return
+    if (!searchParams.has('action') && !searchParams.has('edit')) return
     const next = new URLSearchParams(searchParams)
     next.delete('action')
+    next.delete('edit')
     setSearchParams(next, { replace: true })
   }
 
@@ -216,7 +239,13 @@ export default function SyncJobsPage() {
           setFormError('JSON 格式不正确')
           return
         }
-        input = { name: values.name, authoringMode: 'raw', raw: parsed }
+        input = {
+          name: values.name,
+          authoringMode: 'raw',
+          raw: parsed,
+          retryMax: values.retryMax ?? 0,
+          retryIntervalSeconds: values.retryIntervalSeconds ?? 60,
+        }
       } else {
         const readerColumns = splitColumns(values.readerColumns)
         const writerColumns = splitColumns(values.writerColumns)
@@ -249,6 +278,8 @@ export default function SyncJobsPage() {
               },
             },
           },
+          retryMax: values.retryMax ?? 0,
+          retryIntervalSeconds: values.retryIntervalSeconds ?? 60,
         }
       }
 
@@ -324,7 +355,15 @@ export default function SyncJobsPage() {
   }
 
   const columns: TableColumnProps<SyncJob>[] = [
-    { title: '名称', dataIndex: 'name', width: 200, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 200,
+      ellipsis: true,
+      render: (value: string, job) => (
+        <Link onClick={() => navigate(`/sync-jobs/${job.id}`)}>{value}</Link>
+      ),
+    },
     {
       title: '模式',
       dataIndex: 'authoringMode',
@@ -334,6 +373,24 @@ export default function SyncJobsPage() {
       ),
     },
     { title: '摘要', dataIndex: 'summary', ellipsis: true },
+    {
+      title: '最近运行',
+      width: 230,
+      render: (_, job) => {
+        const lastRun = job.lastRun
+        if (!lastRun) {
+          return <Typography.Text type="secondary">未运行</Typography.Text>
+        }
+        return (
+          <Space size={4}>
+            <RunStatusTag status={lastRun.status} />
+            <Link onClick={() => navigate(`/runs/${lastRun.id}`)}>
+              {formatTime(lastRun.startedAt)}
+            </Link>
+          </Space>
+        )
+      },
+    },
     {
       title: '更新时间',
       dataIndex: 'updatedAt',
@@ -478,6 +535,8 @@ export default function SyncJobsPage() {
             channel: 1,
             errorLimitRecord: 0,
             errorLimitPercentage: 0,
+            retryMax: 0,
+            retryIntervalSeconds: 60,
           }}
         >
           <Grid.Row gutter={16}>
@@ -616,6 +675,25 @@ export default function SyncJobsPage() {
               </Card>
             </>
           )}
+
+          <Card title="运行策略">
+            <Grid.Row gutter={16}>
+              <Grid.Col span={8}>
+                <Form.Item
+                  field="retryMax"
+                  label="失败重试次数"
+                  extra="0 表示不自动重试，最多 10 次"
+                >
+                  <InputNumber min={0} max={10} style={{ width: '100%' }} />
+                </Form.Item>
+              </Grid.Col>
+              <Grid.Col span={8}>
+                <Form.Item field="retryIntervalSeconds" label="重试间隔（秒）">
+                  <InputNumber min={0} max={86400} style={{ width: '100%' }} />
+                </Form.Item>
+              </Grid.Col>
+            </Grid.Row>
+          </Card>
         </Form>
       </Modal>
 

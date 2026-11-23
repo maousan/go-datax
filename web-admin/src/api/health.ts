@@ -4,6 +4,7 @@ import { apiGet } from './client'
 export interface Health {
   status: string
   version: string
+  dataxVersion?: string
 }
 
 export function useHealth() {

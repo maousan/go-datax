@@ -3,11 +3,15 @@ import {
   Button,
   Card,
   Descriptions,
+  Grid,
+  Link,
+  Progress,
   Space,
   Spin,
+  Statistic,
   Typography,
 } from '@arco-design/web-react'
-import { IconDownload, IconLeft, IconStop } from '@arco-design/web-react/icon'
+import { IconDownload, IconLeft, IconRefresh, IconStop } from '@arco-design/web-react/icon'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
@@ -15,10 +19,18 @@ import {
   downloadRunArtifact,
   streamRunLogs,
   useCancelRun,
+  useRerunRun,
   useRun,
+  type RunProgress,
 } from '../../api/runs'
 import RunStatusTag from '../../components/RunStatusTag'
-import { formatDuration, formatTime } from '../../utils/format'
+import { formatBytes, formatDuration, formatTime } from '../../utils/format'
+
+const TRIGGER_LABELS: Record<string, string> = {
+  manual: '手动',
+  rerun: '重跑',
+  retry: '自动重试',
+}
 
 export default function RunDetailPage() {
   const params = useParams()
@@ -36,8 +48,10 @@ function RunDetailView({ runId }: { runId: number }) {
   const navigate = useNavigate()
   const runQuery = useRun(runId)
   const cancelMutation = useCancelRun()
+  const rerunMutation = useRerunRun()
 
   const [lines, setLines] = useState<string[]>([])
+  const [liveProgress, setLiveProgress] = useState<RunProgress | null>(null)
   const [streamError, setStreamError] = useState('')
   const [actionError, setActionError] = useState('')
   const [follow, setFollow] = useState(true)
@@ -58,6 +72,9 @@ function RunDetailView({ runId }: { runId: number }) {
               if (event.type === 'log' && event.line !== undefined) {
                 offset = event.seq ?? offset
                 setLines((previous) => [...previous, event.line as string])
+              }
+              if (event.type === 'progress' && event.progress) {
+                setLiveProgress(event.progress)
               }
               if (event.type === 'status') {
                 void queryClient.invalidateQueries({ queryKey: ['run', runId] })
@@ -93,6 +110,7 @@ function RunDetailView({ runId }: { runId: number }) {
   }, [lines, follow])
 
   const run = runQuery.data
+  const progress = liveProgress ?? run?.progress
 
   const handleDownload = async (kind: 'log' | 'snapshot') => {
     setActionError('')
@@ -103,14 +121,36 @@ function RunDetailView({ runId }: { runId: number }) {
     }
   }
 
+  const handleRerun = async () => {
+    setActionError('')
+    try {
+      const next = await rerunMutation.mutateAsync(runId)
+      navigate(`/runs/${next.id}`)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '重跑失败')
+    }
+  }
+
   const details = run
     ? [
-        { label: '任务', value: run.syncJobName },
+        {
+          label: '任务',
+          value: run.syncJobId ? (
+            <Link onClick={() => navigate(`/sync-jobs/${run.syncJobId}`)}>
+              {run.syncJobName}
+            </Link>
+          ) : (
+            run.syncJobName
+          ),
+        },
         { label: '开始时间', value: formatTime(run.startedAt) },
         { label: '结束时间', value: formatTime(run.finishedAt) },
         { label: '耗时', value: formatDuration(run.startedAt, run.finishedAt) },
         { label: '退出码', value: run.exitCode === null ? '-' : String(run.exitCode) },
-        { label: '触发方式', value: run.trigger },
+        { label: '触发方式', value: TRIGGER_LABELS[run.trigger] ?? run.trigger },
+        ...(run.retryAttempt > 0
+          ? [{ label: '重试次数', value: `第 ${run.retryAttempt} 次重试` }]
+          : []),
         { label: '错误摘要', value: run.errorSummary || '-', span: 3 },
       ]
     : []
@@ -140,6 +180,15 @@ function RunDetailView({ runId }: { runId: number }) {
                 停止
               </Button>
             ) : null}
+            {run && run.status !== 'running' ? (
+              <Button
+                icon={<IconRefresh />}
+                loading={rerunMutation.isPending}
+                onClick={handleRerun}
+              >
+                重跑
+              </Button>
+            ) : null}
             <Button icon={<IconDownload />} onClick={() => handleDownload('log')}>
               下载日志
             </Button>
@@ -159,6 +208,38 @@ function RunDetailView({ runId }: { runId: number }) {
       </Card>
 
       {actionError ? <Alert type="error" content={actionError} closable /> : null}
+
+      {progress ? (
+        <Card
+          title="同步进度"
+          extra={<Typography.Text type="secondary">数据来自引擎进度上报</Typography.Text>}
+        >
+          <Progress percent={Math.min(100, Math.max(0, progress.percent))} strokeWidth={10} />
+          <Grid.Row gutter={16} style={{ marginTop: 16 }}>
+            <Grid.Col span={6}>
+              <Statistic title="已读记录" value={progress.readRecords} />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <Statistic title="已读流量" value={formatBytes(progress.readBytes)} />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <Statistic
+                title="读取速度"
+                value={`${formatBytes(progress.speedBytesPerSec)}/s · ${progress.speedRecordsPerSec} 条/s`}
+              />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <Statistic title="错误记录" value={progress.errorRecords} />
+            </Grid.Col>
+          </Grid.Row>
+        </Card>
+      ) : run?.status === 'running' ? (
+        <Card title="同步进度">
+          <Typography.Text type="secondary">
+            等待引擎上报进度（默认每 30 秒一次）
+          </Typography.Text>
+        </Card>
+      ) : null}
 
       <Card title="运行日志">
         {streamError ? (

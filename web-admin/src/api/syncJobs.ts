@@ -29,8 +29,24 @@ export interface SyncJob {
   form?: FormJobDefinition
   raw?: unknown
   summary: string
+  retryMax: number
+  retryIntervalSeconds: number
+  lastRun?: Run
   createdAt: string
   updatedAt: string
+}
+
+export interface SyncJobStats {
+  jobId: number
+  windowDays: number
+  total: number
+  succeeded: number
+  failed: number
+  canceled: number
+  running: number
+  successRate: number
+  avgDurationSeconds: number | null
+  lastFailedRun?: Run
 }
 
 export interface SyncJobInput {
@@ -38,12 +54,35 @@ export interface SyncJobInput {
   authoringMode: AuthoringMode
   form?: FormJobDefinition
   raw?: unknown
+  retryMax: number
+  retryIntervalSeconds: number
 }
 
 export function useSyncJobs(query: string) {
   return useQuery({
     queryKey: ['sync-jobs', query],
     queryFn: () => apiGet<SyncJob[]>(`/api/v1/sync-jobs?query=${encodeURIComponent(query)}`),
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => job.lastRun?.status === 'running') ? 3000 : false,
+  })
+}
+
+export function useSyncJob(id: number) {
+  return useQuery({
+    queryKey: ['sync-jobs', 'detail', id],
+    queryFn: () => apiGet<SyncJob>(`/api/v1/sync-jobs/${id}`),
+    enabled: Number.isFinite(id) && id > 0,
+    refetchInterval: (query) =>
+      query.state.data?.lastRun?.status === 'running' ? 3000 : false,
+  })
+}
+
+export function useSyncJobStats(id: number, days = 30) {
+  return useQuery({
+    queryKey: ['sync-jobs', 'detail', id, 'stats', days],
+    queryFn: () => apiGet<SyncJobStats>(`/api/v1/sync-jobs/${id}/stats?days=${days}`),
+    enabled: Number.isFinite(id) && id > 0,
+    refetchInterval: (query) => (query.state.data?.running ? 3000 : false),
   })
 }
 
@@ -100,6 +139,7 @@ export function useStartRun() {
     mutationFn: (jobId: number) => apiPost<Run>(`/api/v1/sync-jobs/${jobId}/runs`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['sync-jobs'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
   })

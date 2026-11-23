@@ -1,8 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getToken } from '../auth/storage'
-import { ApiError, apiGet } from './client'
+import { ApiError, apiGet, apiPost } from './client'
 
 export type RunStatus = 'running' | 'succeeded' | 'failed' | 'canceled'
+
+export interface RunProgress {
+  percent: number
+  readRecords: number
+  readBytes: number
+  speedBytesPerSec: number
+  speedRecordsPerSec: number
+  errorRecords: number
+}
 
 export interface Run {
   id: number
@@ -15,6 +24,8 @@ export interface Run {
   exitCode: number | null
   errorSummary: string
   logSize: number
+  progress?: RunProgress
+  retryAttempt: number
   createdAt: string
 }
 
@@ -75,12 +86,47 @@ export function useCancelRun() {
   })
 }
 
+export function useRerunRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiPost<Run>(`/api/v1/runs/${id}/rerun`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['sync-jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
+export interface OverviewDailyStat {
+  date: string
+  total: number
+  succeeded: number
+  failed: number
+  canceled: number
+  readRecords: number
+  readBytes: number
+}
+
+export interface OverviewFailedJob {
+  jobId: number
+  jobName: string
+  failures: number
+}
+
 export interface Overview {
   dataSourceCount: number
   syncJobCount: number
   windowHours: number
   totalRuns: number
   successRate: number
+  statusCounts: Record<RunStatus, number>
+  runningRuns: number
+  failedRuns: number
+  readRecords: number
+  readBytes: number
+  dailyStats: OverviewDailyStat[]
+  failedJobs: OverviewFailedJob[]
   recentRuns: Run[]
 }
 
@@ -130,12 +176,13 @@ export async function downloadRunArtifact(id: number, kind: 'log' | 'snapshot'):
 }
 
 export interface RunEvent {
-  type: 'log' | 'status' | 'end' | 'ping'
+  type: 'log' | 'status' | 'end' | 'ping' | 'progress'
   line?: string
   seq?: number
   status?: RunStatus
   exitCode?: number
   finishedAt?: string
+  progress?: RunProgress
 }
 
 export async function streamRunLogs(
