@@ -21,24 +21,33 @@ var ErrTooManyRuns = errors.New("too many running jobs")
 
 // Config 是执行器配置。
 type Config struct {
-	DataXBin     string
-	DataXVersion string
-	LogsDir      string
-	SnapshotsDir string
+	DataXBin      string
+	DataXVersion  string
+	LogsDir       string
+	SnapshotsDir  string
 	MaxConcurrent int
-	MaxRuns      int
-	MaxAgeDays   int
-	MaxLogBytes  int64
+	MaxRuns       int
+	MaxAgeDays    int
+	MaxLogBytes   int64
+}
+
+// RuntimeSettings 是可在管理台热更新的运行参数。
+type RuntimeSettings struct {
+	MaxConcurrent int   `json:"maxConcurrent"`
+	MaxRuns       int   `json:"maxRuns"`
+	MaxAgeDays    int   `json:"maxAgeDays"`
+	MaxLogBytes   int64 `json:"maxLogBytes"`
 }
 
 // Event 是推送给 SSE 订阅者的事件。
 type Event struct {
-	Type       string `json:"type"`
-	Line       string `json:"line,omitempty"`
-	Seq        int64  `json:"seq,omitempty"`
-	Status     string `json:"status,omitempty"`
-	ExitCode   *int   `json:"exitCode,omitempty"`
-	FinishedAt string `json:"finishedAt,omitempty"`
+	Type       string             `json:"type"`
+	Line       string             `json:"line,omitempty"`
+	Seq        int64              `json:"seq,omitempty"`
+	Status     string             `json:"status,omitempty"`
+	ExitCode   *int               `json:"exitCode,omitempty"`
+	FinishedAt string             `json:"finishedAt,omitempty"`
+	Progress   *store.RunProgress `json:"progress,omitempty"`
 }
 
 type runningRun struct {
@@ -58,6 +67,8 @@ type Manager struct {
 	subscribers map[int64]map[chan Event]struct{}
 
 	command func(snapshotPath string) *exec.Cmd
+
+	onFinish func(store.JobRun, bool)
 }
 
 // Option 调整执行器行为（测试可注入命令）。
@@ -105,8 +116,64 @@ func (m *Manager) DataXVersion() string { return m.cfg.DataXVersion }
 // Prune 按保留策略清理运行记录与文件。
 func (m *Manager) Prune() { m.prune() }
 
-// Start 启动一次运行。config 是已展开的 DataX 配置。
+// Runtime 返回当前运行参数。
+func (m *Manager) Runtime() RuntimeSettings {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return RuntimeSettings{
+		MaxConcurrent: m.cfg.MaxConcurrent,
+		MaxRuns:       m.cfg.MaxRuns,
+		MaxAgeDays:    m.cfg.MaxAgeDays,
+		MaxLogBytes:   m.cfg.MaxLogBytes,
+	}
+}
+
+// UpdateRuntime 热更新运行参数，并按新的保留策略立即清理。
+func (m *Manager) UpdateRuntime(settings RuntimeSettings) {
+	m.mu.Lock()
+	if settings.MaxConcurrent > 0 {
+		m.cfg.MaxConcurrent = settings.MaxConcurrent
+	}
+	if settings.MaxRuns > 0 {
+		m.cfg.MaxRuns = settings.MaxRuns
+	}
+	if settings.MaxAgeDays > 0 {
+		m.cfg.MaxAgeDays = settings.MaxAgeDays
+	}
+	if settings.MaxLogBytes > 0 {
+		m.cfg.MaxLogBytes = settings.MaxLogBytes
+	}
+	m.mu.Unlock()
+	m.prune()
+}
+
+// SetOnFinish 设置运行结束后的回调。willRetry 表示失败后是否会安排自动重试。
+func (m *Manager) SetOnFinish(fn func(store.JobRun, bool)) {
+	m.mu.Lock()
+	m.onFinish = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) notifyFinish(run store.JobRun, willRetry bool) {
+	m.mu.Lock()
+	fn := m.onFinish
+	m.mu.Unlock()
+	if fn != nil {
+		fn(run, willRetry)
+	}
+}
+
+// Start 启动一次手动运行。config 是已展开的 DataX 配置。
 func (m *Manager) Start(job store.SyncJob, config map[string]any) (store.JobRun, error) {
+	return m.start(job, config, store.RunTriggerManual, 0)
+}
+
+// Rerun 使用任务当前配置重新执行一次。
+func (m *Manager) Rerun(job store.SyncJob, config map[string]any) (store.JobRun, error) {
+	return m.start(job, config, store.RunTriggerRerun, 0)
+}
+
+func (m *Manager) start(job store.SyncJob, config map[string]any, trigger string, retryAttempt int) (store.JobRun, error) {
 	m.mu.Lock()
 	if m.jobLocks[job.ID] {
 		m.mu.Unlock()
@@ -128,11 +195,12 @@ func (m *Manager) Start(job store.SyncJob, config map[string]any) (store.JobRun,
 	now := time.Now()
 	jobID := job.ID
 	run := store.JobRun{
-		SyncJobID:   &jobID,
-		SyncJobName: job.Name,
-		Status:      store.RunStatusRunning,
-		Trigger:     store.RunTriggerManual,
-		StartedAt:   now,
+		SyncJobID:    &jobID,
+		SyncJobName:  job.Name,
+		Status:       store.RunStatusRunning,
+		Trigger:      trigger,
+		StartedAt:    now,
+		RetryAttempt: retryAttempt,
 	}
 	if err := m.store.CreateJobRun(&run); err != nil {
 		releaseLock()
@@ -165,7 +233,7 @@ func (m *Manager) Start(job store.SyncJob, config map[string]any) (store.JobRun,
 	m.running[run.ID] = entry
 	m.mu.Unlock()
 
-	go m.execute(entry, releaseLock)
+	go m.execute(entry, job, releaseLock)
 	return run, nil
 }
 
@@ -177,16 +245,23 @@ func (m *Manager) failBeforeStart(run *store.JobRun, summary string) {
 	_ = m.store.UpdateJobRun(run)
 }
 
-func (m *Manager) execute(entry *runningRun, releaseLock func()) {
+func (m *Manager) execute(entry *runningRun, job store.SyncJob, releaseLock func()) {
 	logFile, err := os.OpenFile(entry.run.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		m.finish(entry, 1, fmt.Sprintf("打开日志文件失败: %v", err), false)
 		releaseLock()
+		scheduled := m.maybeScheduleRetry(job, entry.run)
+		m.notifyFinish(entry.run, scheduled)
 		return
 	}
 
-	writer := newLogWriter(logFile, m.cfg.MaxLogBytes, func(line string, seq int64) {
+	m.mu.Lock()
+	maxLogBytes := m.cfg.MaxLogBytes
+	m.mu.Unlock()
+
+	writer := newLogWriter(logFile, maxLogBytes, func(line string, seq int64) {
 		m.broadcast(entry.run.ID, Event{Type: "log", Line: line, Seq: seq})
+		m.observeProgress(entry, line)
 	})
 	defer writer.Close()
 
@@ -199,6 +274,8 @@ func (m *Manager) execute(entry *runningRun, releaseLock func()) {
 		_ = logFile.Close()
 		m.finish(entry, 1, fmt.Sprintf("启动 datax 进程失败: %v", err), false)
 		releaseLock()
+		scheduled := m.maybeScheduleRetry(job, entry.run)
+		m.notifyFinish(entry.run, scheduled)
 		return
 	}
 
@@ -241,7 +318,75 @@ func (m *Manager) execute(entry *runningRun, releaseLock func()) {
 
 	m.finish(entry, exitCode, summary, canceled)
 	releaseLock()
+	scheduled := m.maybeScheduleRetry(job, entry.run)
+	m.notifyFinish(entry.run, scheduled)
 	m.prune()
+}
+
+// maybeScheduleRetry 在运行失败后按任务策略安排一次自动重试，返回是否已安排。
+func (m *Manager) maybeScheduleRetry(job store.SyncJob, failed store.JobRun) bool {
+	if failed.Status != store.RunStatusFailed {
+		return false
+	}
+	if job.RetryMax <= 0 || failed.RetryAttempt >= job.RetryMax {
+		return false
+	}
+
+	interval := time.Duration(job.RetryIntervalSeconds) * time.Second
+	if interval < 0 {
+		interval = 0
+	}
+
+	go func() {
+		if interval > 0 {
+			time.Sleep(interval)
+		}
+
+		// 延迟期间任务可能被删除，或重试策略被改小。
+		current, err := m.store.GetSyncJob(job.ID)
+		if err != nil || current.RetryMax <= failed.RetryAttempt {
+			return
+		}
+
+		config, err := readRunSnapshot(failed.SnapshotPath)
+		if err != nil {
+			return
+		}
+		_, _ = m.start(current, config, store.RunTriggerRetry, failed.RetryAttempt+1)
+	}()
+	return true
+}
+
+func readRunSnapshot(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+// observeProgress 解析引擎上报的进度快照，持久化并推送给订阅者。
+func (m *Manager) observeProgress(entry *runningRun, line string) {
+	progress, ok := parseProgressLine(line)
+	if !ok {
+		return
+	}
+	data, err := json.Marshal(progress)
+	if err != nil {
+		return
+	}
+
+	m.mu.Lock()
+	entry.run.Progress = string(data)
+	m.mu.Unlock()
+
+	_ = m.store.UpdateJobRunProgress(entry.run.ID, string(data))
+	snapshot := progress
+	m.broadcast(entry.run.ID, Event{Type: "progress", Progress: &snapshot})
 }
 
 func (m *Manager) finish(entry *runningRun, exitCode int, summary string, canceled bool) {
@@ -324,6 +469,14 @@ func (m *Manager) Subscribe(runID int64, offset int64) ([]Event, <-chan Event, f
 		return nil, nil, nil, err
 	}
 
+	// 订阅时先补一条当前进度，避免中途接入的客户端要等到下一次上报。
+	if run.Progress != "" {
+		var progress store.RunProgress
+		if err := json.Unmarshal([]byte(run.Progress), &progress); err == nil {
+			replay = append(replay, Event{Type: "progress", Progress: &progress})
+		}
+	}
+
 	if run.Status != store.RunStatusRunning {
 		if run.FinishedAt != nil {
 			replay = append(replay, Event{
@@ -372,7 +525,11 @@ func (m *Manager) broadcast(runID int64, event Event) {
 }
 
 func (m *Manager) prune() {
-	pruned, err := m.store.ListRunsForPrune(m.cfg.MaxRuns, m.cfg.MaxAgeDays)
+	m.mu.Lock()
+	maxRuns, maxAgeDays := m.cfg.MaxRuns, m.cfg.MaxAgeDays
+	m.mu.Unlock()
+
+	pruned, err := m.store.ListRunsForPrune(maxRuns, maxAgeDays)
 	if err != nil {
 		return
 	}

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/longkeyy/go-datax/internal/store"
 )
 
 func createSQLiteDataSourceForJob(t *testing.T, handler http.Handler, token, name, dir string) dataSourceResponse {
@@ -316,5 +319,216 @@ func TestDataSourceDeleteBlockedWhenReferenced(t *testing.T) {
 	}
 	if !strings.Contains(body.Error.Message, "references-reader") {
 		t.Errorf("message does not name the job: %q", body.Error.Message)
+	}
+}
+
+func createRawJobForRuns(t *testing.T, dataStore *store.Store, name string) store.SyncJob {
+	t.Helper()
+
+	job := store.SyncJob{
+		Name:          name,
+		AuthoringMode: "raw",
+		Definition:    `{"job":{"content":[{"reader":{"name":"streamreader","parameter":{}},"writer":{"name":"streamwriter","parameter":{}}}]}}`,
+	}
+	if err := dataStore.CreateSyncJob(&job); err != nil {
+		t.Fatalf("CreateSyncJob() failed: %v", err)
+	}
+	return job
+}
+
+func seedJobRun(t *testing.T, dataStore *store.Store, job store.SyncJob, status string, started time.Time, duration time.Duration, summary string) store.JobRun {
+	t.Helper()
+
+	jobID := job.ID
+	run := store.JobRun{
+		SyncJobID:    &jobID,
+		SyncJobName:  job.Name,
+		Status:       status,
+		Trigger:      store.RunTriggerManual,
+		StartedAt:    started,
+		ErrorSummary: summary,
+	}
+	if status != store.RunStatusRunning {
+		finished := started.Add(duration)
+		run.FinishedAt = &finished
+	}
+	if err := dataStore.CreateJobRun(&run); err != nil {
+		t.Fatalf("CreateJobRun() failed: %v", err)
+	}
+	return run
+}
+
+func TestSyncJobLastRunAndStats(t *testing.T) {
+	dataStore := openTestStore(t)
+	_, handler := newTestServerWithStore(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	}, testAuthConfig(t), dataStore)
+	token := loginToken(t, handler, "admin", "secret")
+
+	job := createRawJobForRuns(t, dataStore, "nightly-sync")
+	empty := createRawJobForRuns(t, dataStore, "empty-job")
+
+	now := time.Now()
+	seedJobRun(t, dataStore, job, store.RunStatusSucceeded, now.AddDate(0, 0, -40), 10*time.Second, "")
+	seedJobRun(t, dataStore, job, store.RunStatusSucceeded, now.Add(-3*time.Hour), 30*time.Second, "")
+	failed := seedJobRun(t, dataStore, job, store.RunStatusFailed, now.Add(-2*time.Hour), 60*time.Second, "boom")
+	seedJobRun(t, dataStore, job, store.RunStatusCanceled, now.Add(-time.Hour), 90*time.Second, "")
+	running := seedJobRun(t, dataStore, job, store.RunStatusRunning, now.Add(-30*time.Minute), 0, "")
+
+	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var jobs []syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("list is not JSON: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("jobs = %d, want 2", len(jobs))
+	}
+	var listed, emptyListed *syncJobResponse
+	for i := range jobs {
+		switch jobs[i].ID {
+		case job.ID:
+			listed = &jobs[i]
+		case empty.ID:
+			emptyListed = &jobs[i]
+		}
+	}
+	if listed == nil || listed.LastRun == nil {
+		t.Fatalf("job lastRun missing: %+v", listed)
+	}
+	if listed.LastRun.ID != running.ID || listed.LastRun.Status != store.RunStatusRunning {
+		t.Errorf("lastRun = %+v, want running run %d", listed.LastRun, running.ID)
+	}
+	if emptyListed == nil || emptyListed.LastRun != nil {
+		t.Errorf("empty job lastRun = %+v, want nil", emptyListed)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var detail syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("detail is not JSON: %v", err)
+	}
+	if detail.LastRun == nil || detail.LastRun.ID != running.ID {
+		t.Errorf("detail lastRun = %+v, want run %d", detail.LastRun, running.ID)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/stats?days=30", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var stats struct {
+		JobID              int64        `json:"jobId"`
+		WindowDays         int          `json:"windowDays"`
+		Total              int64        `json:"total"`
+		Succeeded          int64        `json:"succeeded"`
+		Failed             int64        `json:"failed"`
+		Canceled           int64        `json:"canceled"`
+		Running            int64        `json:"running"`
+		SuccessRate        float64      `json:"successRate"`
+		AvgDurationSeconds float64      `json:"avgDurationSeconds"`
+		LastFailedRun      *runResponse `json:"lastFailedRun"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("stats is not JSON: %v", err)
+	}
+	if stats.JobID != job.ID || stats.WindowDays != 30 {
+		t.Errorf("stats identity = %+v", stats)
+	}
+	if stats.Total != 4 || stats.Succeeded != 1 || stats.Failed != 1 || stats.Canceled != 1 || stats.Running != 1 {
+		t.Errorf("stats counts = %+v, want 4/1/1/1/1 (old run excluded)", stats)
+	}
+	if diff := stats.SuccessRate - 1.0/3.0; diff > 0.001 || diff < -0.001 {
+		t.Errorf("successRate = %v, want 1/3 (running excluded)", stats.SuccessRate)
+	}
+	if diff := stats.AvgDurationSeconds - 60; diff > 0.5 || diff < -0.5 {
+		t.Errorf("avgDurationSeconds = %v, want ~60", stats.AvgDurationSeconds)
+	}
+	if stats.LastFailedRun == nil || stats.LastFailedRun.ID != failed.ID {
+		t.Errorf("lastFailedRun = %+v, want run %d", stats.LastFailedRun, failed.ID)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(empty.ID)+"/stats", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty stats status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var emptyStats struct {
+		Total       int64        `json:"total"`
+		SuccessRate float64      `json:"successRate"`
+		LastFailed  *runResponse `json:"lastFailedRun"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &emptyStats); err != nil {
+		t.Fatalf("empty stats is not JSON: %v", err)
+	}
+	if emptyStats.Total != 0 || emptyStats.SuccessRate != 0 || emptyStats.LastFailed != nil {
+		t.Errorf("empty stats = %+v, want zero values", emptyStats)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/9999/stats", token, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown job stats status = %d, want 404", rec.Code)
+	}
+}
+
+func TestSyncJobRetryPolicy(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+	dir := t.TempDir()
+	reader := createSQLiteDataSourceForJob(t, handler, token, "retry-reader", dir)
+	writer := createSQLiteDataSourceForJob(t, handler, token, "retry-writer", dir)
+
+	body := formJobBody("retry-policy", reader.ID, writer.ID)
+	body["retryMax"] = 3
+	body["retryIntervalSeconds"] = 15
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var created syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("create response is not JSON: %v", err)
+	}
+	if created.RetryMax != 3 || created.RetryIntervalSeconds != 15 {
+		t.Errorf("retry policy = %d/%ds, want 3/15s", created.RetryMax, created.RetryIntervalSeconds)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(created.ID), token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d", rec.Code)
+	}
+	var fetched syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &fetched); err != nil {
+		t.Fatalf("get response is not JSON: %v", err)
+	}
+	if fetched.RetryMax != 3 || fetched.RetryIntervalSeconds != 15 {
+		t.Errorf("fetched retry policy = %d/%ds, want 3/15s", fetched.RetryMax, fetched.RetryIntervalSeconds)
+	}
+
+	body["name"] = "retry-policy-updated"
+	body["retryMax"] = 0
+	body["retryIntervalSeconds"] = 30
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(created.ID), token, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var updated syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("update response is not JSON: %v", err)
+	}
+	if updated.RetryMax != 0 || updated.RetryIntervalSeconds != 0 {
+		t.Errorf("updated retry policy = %d/%ds, want 0/0 (interval cleared)", updated.RetryMax, updated.RetryIntervalSeconds)
+	}
+
+	body["retryMax"] = 11
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(created.ID), token, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid retryMax status = %d, want 400", rec.Code)
 	}
 }

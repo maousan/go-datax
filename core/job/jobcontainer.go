@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/config"
 	"github.com/longkeyy/go-datax/common/logger"
+	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/statistics"
-	"github.com/longkeyy/go-datax/core/task"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
+	"github.com/longkeyy/go-datax/core/task"
 	"go.uber.org/zap"
 )
 
@@ -19,15 +19,15 @@ import (
 // coordinating between reader and writer plugins while providing
 // real-time statistics and error handling.
 type JobContainer struct {
-	configuration   config.Configuration
-	readerPlugin    string
-	writerPlugin    string
-	needChannels    int
-	communicator    *statistics.JobCommunicator
-	schedulerReporter *statistics.SchedulerReporter
-	totalStage      int
-	startTimeStamp  int64
-	endTimeStamp    int64
+	configuration          config.Configuration
+	readerPlugin           string
+	writerPlugin           string
+	needChannels           int
+	communicator           *statistics.JobCommunicator
+	schedulerReporter      *statistics.SchedulerReporter
+	totalStage             int
+	startTimeStamp         int64
+	endTimeStamp           int64
 	startTransferTimeStamp int64
 	endTransferTimeStamp   int64
 
@@ -324,6 +324,12 @@ func (jc *JobContainer) logStatistics() {
 
 	communication.SetLongCounter(statistics.BYTE_SPEED, byteSpeedPerSecond)
 	communication.SetLongCounter(statistics.RECORD_SPEED, recordSpeedPerSecond)
+	// 补齐汇总字段，保证结束时输出的快照与前面的统计行一致。
+	communication.SetLongCounter(statistics.TOTAL_READ_RECORDS, statistics.DefaultCommunicationTool.GetTotalReadRecords(communication))
+	communication.SetLongCounter(statistics.TOTAL_READ_BYTES, statistics.DefaultCommunicationTool.GetTotalReadBytes(communication))
+	communication.SetLongCounter(statistics.TOTAL_ERROR_RECORDS, statistics.DefaultCommunicationTool.GetTotalErrorRecords(communication))
+	communication.SetLongCounter(statistics.TOTAL_ERROR_BYTES, statistics.DefaultCommunicationTool.GetTotalErrorBytes(communication))
+	communication.SetLongCounter(statistics.PERCENTAGE, 100)
 
 	jc.communicator.Report(communication)
 

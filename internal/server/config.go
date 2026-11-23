@@ -11,9 +11,10 @@ const (
 	// DefaultListen 是管理台默认监听地址：只绑定回环地址，避免误暴露。
 	DefaultListen = "127.0.0.1:8080"
 
-	defaultMaxRuns     = 500
-	defaultMaxAgeDays  = 30
-	defaultMaxLogBytes = 10 * 1024 * 1024
+	defaultMaxRuns       = 500
+	defaultMaxAgeDays    = 30
+	defaultMaxLogBytes   = 10 * 1024 * 1024
+	defaultMaxConcurrent = 2
 )
 
 // DataXConfig 描述 datax 执行器的定位方式。
@@ -26,6 +27,11 @@ type RetentionConfig struct {
 	MaxRuns     int   `json:"maxRuns"`
 	MaxAgeDays  int   `json:"maxAgeDays"`
 	MaxLogBytes int64 `json:"maxLogBytes"`
+}
+
+// RuntimeConfig 描述执行器的运行参数。
+type RuntimeConfig struct {
+	MaxConcurrent int `json:"maxConcurrent"`
 }
 
 // AuthConfig 描述管理台的唯一账号与令牌设置。
@@ -43,6 +49,10 @@ type Config struct {
 	Auth      AuthConfig      `json:"auth"`
 	DataX     DataXConfig     `json:"datax"`
 	Retention RetentionConfig `json:"retention"`
+	Runtime   RuntimeConfig   `json:"runtime"`
+
+	// path 是配置文件的加载路径，不参与 JSON 序列化。
+	path string
 }
 
 // DefaultConfig 返回给定数据目录下的默认配置。
@@ -57,6 +67,9 @@ func DefaultConfig(dataDir string) Config {
 			MaxRuns:     defaultMaxRuns,
 			MaxAgeDays:  defaultMaxAgeDays,
 			MaxLogBytes: defaultMaxLogBytes,
+		},
+		Runtime: RuntimeConfig{
+			MaxConcurrent: defaultMaxConcurrent,
 		},
 	}
 }
@@ -93,9 +106,11 @@ func LoadOrCreate(path, dataDir string) (Config, error) {
 			return cfg, fmt.Errorf("parse config %s: %w", path, err)
 		}
 		applyDefaults(&cfg, dataDir)
+		cfg.path = path
 		return cfg, nil
 
 	case os.IsNotExist(err):
+		cfg.path = path
 		if err := Save(path, cfg); err != nil {
 			return cfg, err
 		}
@@ -151,5 +166,8 @@ func applyDefaults(cfg *Config, dataDir string) {
 	}
 	if cfg.Retention.MaxLogBytes <= 0 {
 		cfg.Retention.MaxLogBytes = defaultMaxLogBytes
+	}
+	if cfg.Runtime.MaxConcurrent <= 0 {
+		cfg.Runtime.MaxConcurrent = defaultMaxConcurrent
 	}
 }

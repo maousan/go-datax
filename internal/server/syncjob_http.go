@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/longkeyy/go-datax/internal/store"
 )
@@ -18,12 +19,25 @@ func (s *Server) handleListSyncJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	jobIDs := make([]int64, 0, len(jobs))
+	for _, job := range jobs {
+		jobIDs = append(jobIDs, job.ID)
+	}
+	latestRuns, err := s.dataStore.LatestRunsForJobs(jobIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取最近运行失败")
+		return
+	}
+
 	response := make([]syncJobResponse, 0, len(jobs))
 	for _, job := range jobs {
 		item, err := toSyncJobResponse(job)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "解析同步任务失败")
 			return
+		}
+		if run, ok := latestRuns[job.ID]; ok {
+			item.LastRun = runResponsePtr(run)
 		}
 		response = append(response, item)
 	}
@@ -52,6 +66,73 @@ func (s *Server) handleGetSyncJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	lastRun, found, err := s.dataStore.LatestRunForJob(job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取最近运行失败")
+		return
+	}
+	if found {
+		response.LastRun = runResponsePtr(lastRun)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handleSyncJobStats 返回任务在最近若干天内的运行统计。
+func (s *Server) handleSyncJobStats(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	if _, err := s.dataStore.GetSyncJob(id); err != nil {
+		if errors.Is(err, store.ErrSyncJobNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		return
+	}
+
+	days := 30
+	if value := r.URL.Query().Get("days"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 365 {
+			days = parsed
+		}
+	}
+
+	stats, err := s.dataStore.JobRunStats(id, time.Now().AddDate(0, 0, -days))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "统计运行数据失败")
+		return
+	}
+
+	// 运行中的记录还没有结果，不计入成功率与平均耗时。
+	finished := stats.Total - stats.Running
+	successRate := 0.0
+	if finished > 0 {
+		successRate = float64(stats.Succeeded) / float64(finished)
+	}
+
+	var avgDuration any
+	if finished > 0 {
+		avgDuration = stats.AverageSeconds
+	}
+
+	response := map[string]any{
+		"jobId":              id,
+		"windowDays":         days,
+		"total":              stats.Total,
+		"succeeded":          stats.Succeeded,
+		"failed":             stats.Failed,
+		"canceled":           stats.Canceled,
+		"running":            stats.Running,
+		"successRate":        successRate,
+		"avgDurationSeconds": avgDuration,
+	}
+	if stats.LastFailed != nil {
+		response["lastFailedRun"] = toRunResponse(*stats.LastFailed)
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -78,9 +159,11 @@ func (s *Server) createSyncJob(w http.ResponseWriter, req syncJobRequest) {
 	}
 
 	job := &store.SyncJob{
-		Name:          normalized.Name,
-		AuthoringMode: normalized.AuthoringMode,
-		Definition:    definition,
+		Name:                 normalized.Name,
+		AuthoringMode:        normalized.AuthoringMode,
+		Definition:           definition,
+		RetryMax:             normalized.RetryMax,
+		RetryIntervalSeconds: normalized.RetryIntervalSeconds,
 	}
 	if err := s.dataStore.CreateSyncJob(job); err != nil {
 		if errors.Is(err, store.ErrDuplicateSyncJobName) {
@@ -140,6 +223,8 @@ func (s *Server) handleUpdateSyncJob(w http.ResponseWriter, r *http.Request) {
 
 	existing.Name = normalized.Name
 	existing.Definition = definition
+	existing.RetryMax = normalized.RetryMax
+	existing.RetryIntervalSeconds = normalized.RetryIntervalSeconds
 	if err := s.dataStore.UpdateSyncJob(&existing); err != nil {
 		if errors.Is(err, store.ErrDuplicateSyncJobName) {
 			writeError(w, http.StatusConflict, "duplicate_name", "同步任务名称已存在")
@@ -205,9 +290,11 @@ func (s *Server) handleDuplicateSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 
 	copyJob := &store.SyncJob{
-		Name:          uniqueCopyName(original.Name),
-		AuthoringMode: original.AuthoringMode,
-		Definition:    original.Definition,
+		Name:                 uniqueCopyName(original.Name),
+		AuthoringMode:        original.AuthoringMode,
+		Definition:           original.Definition,
+		RetryMax:             original.RetryMax,
+		RetryIntervalSeconds: original.RetryIntervalSeconds,
 	}
 	if err := s.dataStore.CreateSyncJob(copyJob); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "复制同步任务失败")

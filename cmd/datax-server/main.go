@@ -97,7 +97,7 @@ func main() {
 		DataXVersion:  dataxVersion,
 		LogsDir:       cfg.LogsDir(),
 		SnapshotsDir:  cfg.SnapshotsDir(),
-		MaxConcurrent: 2,
+		MaxConcurrent: cfg.Runtime.MaxConcurrent,
 		MaxRuns:       cfg.Retention.MaxRuns,
 		MaxAgeDays:    cfg.Retention.MaxAgeDays,
 		MaxLogBytes:   cfg.Retention.MaxLogBytes,

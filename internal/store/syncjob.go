@@ -16,12 +16,14 @@ var ErrDuplicateSyncJobName = errors.New("sync job name already exists")
 
 // SyncJob 是一条同步任务定义。
 type SyncJob struct {
-	ID            int64  `gorm:"primaryKey"`
-	Name          string `gorm:"size:100;uniqueIndex;not null"`
-	AuthoringMode string `gorm:"size:10;not null"` // form | raw
-	Definition    string `gorm:"type:text;not null"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                   int64  `gorm:"primaryKey"`
+	Name                 string `gorm:"size:100;uniqueIndex;not null"`
+	AuthoringMode        string `gorm:"size:10;not null"` // form | raw
+	Definition           string `gorm:"type:text;not null"`
+	RetryMax             int    `gorm:"not null;default:0"`
+	RetryIntervalSeconds int    `gorm:"not null;default:0"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // ListSyncJobs 返回任务列表，query 非空时按名称不区分大小写模糊匹配。

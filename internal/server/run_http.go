@@ -16,17 +16,19 @@ import (
 )
 
 type runResponse struct {
-	ID           int64   `json:"id"`
-	SyncJobID    *int64  `json:"syncJobId"`
-	SyncJobName  string  `json:"syncJobName"`
-	Status       string  `json:"status"`
-	Trigger      string  `json:"trigger"`
-	StartedAt    string  `json:"startedAt"`
-	FinishedAt   *string `json:"finishedAt"`
-	ExitCode     *int    `json:"exitCode"`
-	ErrorSummary string  `json:"errorSummary"`
-	LogSize      int64   `json:"logSize"`
-	CreatedAt    string  `json:"createdAt"`
+	ID           int64              `json:"id"`
+	SyncJobID    *int64             `json:"syncJobId"`
+	SyncJobName  string             `json:"syncJobName"`
+	Status       string             `json:"status"`
+	Trigger      string             `json:"trigger"`
+	StartedAt    string             `json:"startedAt"`
+	FinishedAt   *string            `json:"finishedAt"`
+	ExitCode     *int               `json:"exitCode"`
+	ErrorSummary string             `json:"errorSummary"`
+	LogSize      int64              `json:"logSize"`
+	Progress     *store.RunProgress `json:"progress,omitempty"`
+	RetryAttempt int                `json:"retryAttempt"`
+	CreatedAt    string             `json:"createdAt"`
 }
 
 func toRunResponse(run store.JobRun) runResponse {
@@ -40,13 +42,25 @@ func toRunResponse(run store.JobRun) runResponse {
 		ExitCode:     run.ExitCode,
 		ErrorSummary: run.ErrorSummary,
 		LogSize:      run.LogSize,
+		RetryAttempt: run.RetryAttempt,
 		CreatedAt:    run.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if run.FinishedAt != nil {
 		finished := run.FinishedAt.UTC().Format(time.RFC3339)
 		response.FinishedAt = &finished
 	}
+	if run.Progress != "" {
+		var progress store.RunProgress
+		if err := json.Unmarshal([]byte(run.Progress), &progress); err == nil {
+			response.Progress = &progress
+		}
+	}
 	return response
+}
+
+func runResponsePtr(run store.JobRun) *runResponse {
+	response := toRunResponse(run)
+	return &response
 }
 
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +100,68 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal_error", "启动运行失败："+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, toRunResponse(run))
+}
+
+// handleRerun 使用任务当前配置重新执行一次已结束的运行。
+func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if s.executor == nil {
+		writeError(w, http.StatusServiceUnavailable, "executor_unavailable", "执行器未启用")
+		return
+	}
+
+	previous, err := s.dataStore.GetJobRun(id)
+	if errors.Is(err, store.ErrJobRunNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "运行记录不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
+		return
+	}
+	if previous.Status == store.RunStatusRunning {
+		writeError(w, http.StatusConflict, "run_running", "该运行尚未结束，无法重跑")
+		return
+	}
+	if previous.SyncJobID == nil {
+		writeError(w, http.StatusConflict, "job_deleted", "原任务已删除，无法重跑")
+		return
+	}
+
+	job, err := s.dataStore.GetSyncJob(*previous.SyncJobID)
+	if errors.Is(err, store.ErrSyncJobNotFound) {
+		writeError(w, http.StatusConflict, "job_deleted", "原任务已删除，无法重跑")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		return
+	}
+
+	config, err := s.exportConfig(job)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_job", err.Error())
+		return
+	}
+
+	run, err := s.executor.Rerun(job, config)
+	switch {
+	case errors.Is(err, execution.ErrJobRunning):
+		writeError(w, http.StatusConflict, "job_running", "该任务正在运行")
+		return
+	case errors.Is(err, execution.ErrTooManyRuns):
+		writeError(w, http.StatusTooManyRequests, "too_many_runs", "并发运行数已达上限，请稍后重试")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal_error", "启动重跑失败："+err.Error())
 		return
 	}
 
@@ -326,6 +402,38 @@ func (s *Server) loadRunForDownload(w http.ResponseWriter, r *http.Request) (sto
 	return run, true
 }
 
+type overviewDailyStats struct {
+	Date        string `json:"date"`
+	Total       int64  `json:"total"`
+	Succeeded   int64  `json:"succeeded"`
+	Failed      int64  `json:"failed"`
+	Canceled    int64  `json:"canceled"`
+	ReadRecords int64  `json:"readRecords"`
+	ReadBytes   int64  `json:"readBytes"`
+}
+
+type overviewFailedJob struct {
+	JobID    int64  `json:"jobId"`
+	JobName  string `json:"jobName"`
+	Failures int64  `json:"failures"`
+}
+
+type overviewResponse struct {
+	DataSourceCount int64                `json:"dataSourceCount"`
+	SyncJobCount    int64                `json:"syncJobCount"`
+	WindowHours     int                  `json:"windowHours"`
+	TotalRuns       int64                `json:"totalRuns"`
+	SuccessRate     float64              `json:"successRate"`
+	StatusCounts    map[string]int64     `json:"statusCounts"`
+	RunningRuns     int64                `json:"runningRuns"`
+	FailedRuns      int64                `json:"failedRuns"`
+	ReadRecords     int64                `json:"readRecords"`
+	ReadBytes       int64                `json:"readBytes"`
+	DailyStats      []overviewDailyStats `json:"dailyStats"`
+	FailedJobs      []overviewFailedJob  `json:"failedJobs"`
+	RecentRuns      []runResponse        `json:"recentRuns"`
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	hours := 24
 	if value := r.URL.Query().Get("hours"); value != "" {
@@ -333,7 +441,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			hours = parsed
 		}
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	now := time.Now()
+	since := now.Add(-time.Duration(hours) * time.Hour)
 
 	dataSourceCount, err := s.dataStore.CountDataSources()
 	if err != nil {
@@ -345,14 +454,19 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "统计同步任务失败")
 		return
 	}
-	totalRuns, err := s.dataStore.CountRunsSince("", since)
+	statusCounts, err := s.dataStore.RunStatusCountsSince(since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "统计运行记录失败")
 		return
 	}
-	succeededRuns, err := s.dataStore.CountRunsSince(store.RunStatusSucceeded, since)
+	runningRuns, err := s.dataStore.CountRunningRuns()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "统计运行记录失败")
+		return
+	}
+	readRecords, readBytes, err := s.dataStore.RunProgressTotalsSince(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "统计同步数据量失败")
 		return
 	}
 	recent, err := s.dataStore.ListRecentRuns(10)
@@ -361,9 +475,54 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalRuns int64
+	for _, count := range statusCounts {
+		totalRuns += count
+	}
+	finishedRuns := totalRuns - statusCounts[store.RunStatusRunning]
 	successRate := 0.0
-	if totalRuns > 0 {
-		successRate = float64(succeededRuns) / float64(totalRuns)
+	if finishedRuns > 0 {
+		successRate = float64(statusCounts[store.RunStatusSucceeded]) / float64(finishedRuns)
+	}
+
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	trendStart := today.AddDate(0, 0, -13)
+	dailyRows, err := s.dataStore.RunDailyStatsSince(trendStart)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "统计运行趋势失败")
+		return
+	}
+	dailyByDate := make(map[string]store.DailyRunStats, len(dailyRows))
+	for _, row := range dailyRows {
+		dailyByDate[row.Date] = row
+	}
+	dailyStats := make([]overviewDailyStats, 0, 14)
+	for i := 0; i < 14; i++ {
+		date := trendStart.AddDate(0, 0, i).Format("2006-01-02")
+		row := dailyByDate[date]
+		dailyStats = append(dailyStats, overviewDailyStats{
+			Date:        date,
+			Total:       row.Total,
+			Succeeded:   row.Succeeded,
+			Failed:      row.Failed,
+			Canceled:    row.Canceled,
+			ReadRecords: row.ReadRecords,
+			ReadBytes:   row.ReadBytes,
+		})
+	}
+
+	failedJobs, err := s.dataStore.FailedJobsSince(today.AddDate(0, 0, -6), 5)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "统计失败任务失败")
+		return
+	}
+	failedJobItems := make([]overviewFailedJob, 0, len(failedJobs))
+	for _, job := range failedJobs {
+		failedJobItems = append(failedJobItems, overviewFailedJob{
+			JobID:    job.JobID,
+			JobName:  job.JobName,
+			Failures: job.Failures,
+		})
 	}
 
 	recentItems := make([]runResponse, 0, len(recent))
@@ -371,12 +530,19 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		recentItems = append(recentItems, toRunResponse(run))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"dataSourceCount": dataSourceCount,
-		"syncJobCount":    syncJobCount,
-		"windowHours":     hours,
-		"totalRuns":       totalRuns,
-		"successRate":     successRate,
-		"recentRuns":      recentItems,
+	writeJSON(w, http.StatusOK, overviewResponse{
+		DataSourceCount: dataSourceCount,
+		SyncJobCount:    syncJobCount,
+		WindowHours:     hours,
+		TotalRuns:       totalRuns,
+		SuccessRate:     successRate,
+		StatusCounts:    statusCounts,
+		RunningRuns:     runningRuns,
+		FailedRuns:      statusCounts[store.RunStatusFailed],
+		ReadRecords:     readRecords,
+		ReadBytes:       readBytes,
+		DailyStats:      dailyStats,
+		FailedJobs:      failedJobItems,
+		RecentRuns:      recentItems,
 	})
 }

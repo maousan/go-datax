@@ -55,6 +55,7 @@ func newTestServerWithExecutor(t *testing.T, assets map[string]string, auth Auth
 
 	cfg := DefaultConfig("")
 	cfg.Auth = auth
+	cfg.path = filepath.Join(t.TempDir(), "server.json")
 
 	srv, err := New(cfg, "test-version", fsys, dataStore, executor)
 	if err != nil {

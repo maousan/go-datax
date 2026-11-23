@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/longkeyy/go-datax/internal/execution"
+	"github.com/longkeyy/go-datax/internal/notify"
 	"github.com/longkeyy/go-datax/internal/store"
 )
 
@@ -16,12 +19,15 @@ const bearerPrefix = "Bearer "
 
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
-	auth         AuthConfig
+	config       Config
+	configPath   string
 	version      string
 	assets       fs.FS
+	authMu       sync.RWMutex
 	tokens       *TokenService
 	dataStore    *store.Store
 	executor     *execution.Manager
+	notifier     *notify.Notifier
 	dataxVersion string
 	handler      http.Handler
 }
@@ -41,21 +47,52 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 	}
 
 	s := &Server{
-		auth:      cfg.Auth,
-		version:   version,
-		assets:    assets,
-		tokens:    tokens,
-		dataStore: dataStore,
+		config:     cfg,
+		configPath: cfg.path,
+		version:    version,
+		assets:     assets,
+		tokens:     tokens,
+		dataStore:  dataStore,
+		notifier:   notify.New(dataStore),
 	}
 	for _, executor := range executors {
 		if executor != nil {
 			s.executor = executor
 			s.dataxVersion = executor.DataXVersion()
+			executor.SetOnFinish(s.notifier.Notify)
 		}
 	}
+	s.applySavedRuntimeSettings()
 
 	s.handler = s.routes()
 	return s, nil
+}
+
+func (s *Server) applySavedRuntimeSettings() {
+	if s.executor == nil {
+		return
+	}
+	raw, found, err := s.dataStore.GetSetting(runtimeSettingKey)
+	if err != nil || !found || strings.TrimSpace(raw) == "" {
+		return
+	}
+	var settings execution.RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		log.Printf("忽略无法解析的运行参数设置: %v", err)
+		return
+	}
+	if err := validateRuntimeSettings(settings); err != nil {
+		log.Printf("忽略无效的运行参数设置: %v", err)
+		return
+	}
+	s.executor.UpdateRuntime(settings)
+}
+
+// authSnapshot 返回当前认证配置与令牌服务的快照。
+func (s *Server) authSnapshot() (AuthConfig, *TokenService) {
+	s.authMu.RLock()
+	defer s.authMu.RUnlock()
+	return s.config.Auth, s.tokens
 }
 
 // Handler 返回可直接用于 http.Server 或 httptest 的处理器。
@@ -92,6 +129,8 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/sync-jobs/{id}", s.handleGetSyncJob)
 	protected.HandleFunc("PUT /api/v1/sync-jobs/{id}", s.handleUpdateSyncJob)
 	protected.HandleFunc("DELETE /api/v1/sync-jobs/{id}", s.handleDeleteSyncJob)
+	protected.HandleFunc("GET /api/v1/sync-jobs/{id}/stats", s.handleSyncJobStats)
+	protected.HandleFunc("/api/v1/sync-jobs/{id}/stats", methodNotAllowed(http.MethodGet))
 	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/duplicate", s.handleDuplicateSyncJob)
 	protected.HandleFunc("GET /api/v1/sync-jobs/{id}/export", s.handleExportSyncJob)
 	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/runs", s.handleStartRun)
@@ -99,11 +138,26 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/runs", s.handleListRuns)
 	protected.HandleFunc("GET /api/v1/runs/{id}", s.handleGetRun)
 	protected.HandleFunc("POST /api/v1/runs/{id}/cancel", s.handleCancelRun)
+	protected.HandleFunc("POST /api/v1/runs/{id}/rerun", s.handleRerun)
+	protected.HandleFunc("/api/v1/runs/{id}/rerun", methodNotAllowed(http.MethodPost))
 	protected.HandleFunc("GET /api/v1/runs/{id}/logs/stream", s.handleRunLogStream)
 	protected.HandleFunc("GET /api/v1/runs/{id}/log", s.handleRunLogDownload)
 	protected.HandleFunc("GET /api/v1/runs/{id}/snapshot", s.handleRunSnapshot)
 
 	protected.HandleFunc("GET /api/v1/overview", s.handleOverview)
+
+	protected.HandleFunc("GET /api/v1/settings/notifications", s.handleGetNotificationSettings)
+	protected.HandleFunc("PUT /api/v1/settings/notifications", s.handleUpdateNotificationSettings)
+	protected.HandleFunc("/api/v1/settings/notifications", methodNotAllowed("GET, PUT"))
+	protected.HandleFunc("POST /api/v1/settings/notifications/test", s.handleTestNotification)
+	protected.HandleFunc("/api/v1/settings/notifications/test", methodNotAllowed(http.MethodPost))
+
+	protected.HandleFunc("GET /api/v1/settings/account", s.handleGetAccountSettings)
+	protected.HandleFunc("PUT /api/v1/settings/account", s.handleUpdateAccountSettings)
+	protected.HandleFunc("/api/v1/settings/account", methodNotAllowed("GET, PUT"))
+	protected.HandleFunc("GET /api/v1/settings/runtime", s.handleGetRuntimeSettings)
+	protected.HandleFunc("PUT /api/v1/settings/runtime", s.handleUpdateRuntimeSettings)
+	protected.HandleFunc("/api/v1/settings/runtime", methodNotAllowed("GET, PUT"))
 
 	protected.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")

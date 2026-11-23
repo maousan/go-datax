@@ -31,8 +31,8 @@ type jobErrorLimit struct {
 }
 
 type jobSetting struct {
-	Channel    int            `json:"channel"`
-	ErrorLimit jobErrorLimit  `json:"errorLimit"`
+	Channel    int           `json:"channel"`
+	ErrorLimit jobErrorLimit `json:"errorLimit"`
 }
 
 type formJobDefinition struct {
@@ -42,21 +42,26 @@ type formJobDefinition struct {
 }
 
 type syncJobRequest struct {
-	Name          string             `json:"name"`
-	AuthoringMode string             `json:"authoringMode"`
-	Form          *formJobDefinition `json:"form,omitempty"`
-	Raw           json.RawMessage    `json:"raw,omitempty"`
+	Name                 string             `json:"name"`
+	AuthoringMode        string             `json:"authoringMode"`
+	Form                 *formJobDefinition `json:"form,omitempty"`
+	Raw                  json.RawMessage    `json:"raw,omitempty"`
+	RetryMax             int                `json:"retryMax"`
+	RetryIntervalSeconds int                `json:"retryIntervalSeconds"`
 }
 
 type syncJobResponse struct {
-	ID            int64              `json:"id"`
-	Name          string             `json:"name"`
-	AuthoringMode string             `json:"authoringMode"`
-	Form          *formJobDefinition `json:"form,omitempty"`
-	Raw           json.RawMessage    `json:"raw,omitempty"`
-	Summary       string             `json:"summary"`
-	CreatedAt     string             `json:"createdAt"`
-	UpdatedAt     string             `json:"updatedAt"`
+	ID                   int64              `json:"id"`
+	Name                 string             `json:"name"`
+	AuthoringMode        string             `json:"authoringMode"`
+	Form                 *formJobDefinition `json:"form,omitempty"`
+	Raw                  json.RawMessage    `json:"raw,omitempty"`
+	Summary              string             `json:"summary"`
+	RetryMax             int                `json:"retryMax"`
+	RetryIntervalSeconds int                `json:"retryIntervalSeconds"`
+	LastRun              *runResponse       `json:"lastRun,omitempty"`
+	CreatedAt            string             `json:"createdAt"`
+	UpdatedAt            string             `json:"updatedAt"`
 }
 
 func (req syncJobRequest) normalized() (syncJobRequest, error) {
@@ -68,6 +73,16 @@ func (req syncJobRequest) normalized() (syncJobRequest, error) {
 	}
 	if len([]rune(req.Name)) > 100 {
 		return req, fmt.Errorf("名称不能超过 100 个字符")
+	}
+
+	if req.RetryMax < 0 || req.RetryMax > 10 {
+		return req, fmt.Errorf("失败重试次数必须在 0 到 10 之间")
+	}
+	if req.RetryIntervalSeconds < 0 || req.RetryIntervalSeconds > 86400 {
+		return req, fmt.Errorf("重试间隔必须在 0 到 86400 秒之间")
+	}
+	if req.RetryMax == 0 {
+		req.RetryIntervalSeconds = 0
 	}
 
 	switch req.AuthoringMode {
@@ -253,11 +268,13 @@ func writerJDBCURL(dataSourceType, jdbcURL string) any {
 
 func toSyncJobResponse(job store.SyncJob) (syncJobResponse, error) {
 	response := syncJobResponse{
-		ID:            job.ID,
-		Name:          job.Name,
-		AuthoringMode: job.AuthoringMode,
-		CreatedAt:     job.CreatedAt.UTC().Format(timeLayout),
-		UpdatedAt:     job.UpdatedAt.UTC().Format(timeLayout),
+		ID:                   job.ID,
+		Name:                 job.Name,
+		AuthoringMode:        job.AuthoringMode,
+		RetryMax:             job.RetryMax,
+		RetryIntervalSeconds: job.RetryIntervalSeconds,
+		CreatedAt:            job.CreatedAt.UTC().Format(timeLayout),
+		UpdatedAt:            job.UpdatedAt.UTC().Format(timeLayout),
 	}
 
 	switch job.AuthoringMode {

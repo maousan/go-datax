@@ -26,12 +26,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.auth.Verify(req.Username, req.Password) {
+	auth, tokens := s.authSnapshot()
+	if !auth.Verify(req.Username, req.Password) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "用户名或密码错误")
 		return
 	}
 
-	token, session, err := s.tokens.Issue(req.Username)
+	token, session, err := tokens.Issue(req.Username)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "签发登录令牌失败")
 		return
@@ -65,7 +66,8 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 
 		raw := strings.TrimSpace(strings.TrimPrefix(header, bearerPrefix))
-		session, err := s.tokens.Parse(raw)
+		_, tokens := s.authSnapshot()
+		session, err := tokens.Parse(raw)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "登录已失效，请重新登录")
 			return
