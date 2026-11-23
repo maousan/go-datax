@@ -106,10 +106,7 @@ export default function NavBar() {
         </li>
         <li className={styles['nav-optional']}>
           <Tooltip content="设置">
-            <IconButton
-              icon={<IconSettings />}
-              onClick={() => Message.info('主题与布局设置后续开放')}
-            />
+            <IconButton icon={<IconSettings />} onClick={() => navigate('/settings')} />
           </Tooltip>
         </li>
         <li className={styles['nav-optional']}>

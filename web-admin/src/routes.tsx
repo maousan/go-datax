@@ -1,6 +1,7 @@
 import {
   IconDashboard,
   IconHistory,
+  IconSettings,
   IconStorage,
 } from '@arco-design/web-react/icon'
 import type { ComponentType } from 'react'
@@ -35,6 +36,12 @@ export const menuRoutes: MenuRoute[] = [
     icon: IconHistory,
     children: [{ key: 'run-history', name: '运行历史', path: '/runs' }],
   },
+  {
+    key: 'system',
+    name: '系统',
+    icon: IconSettings,
+    children: [{ key: 'settings', name: '设置', path: '/settings' }],
+  },
 ]
 
 export function flattenMenuRoutes(routes: MenuRoute[] = menuRoutes): MenuRoute[] {
@@ -60,6 +67,7 @@ export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
   if (pathname.startsWith('/data-sources') || pathname.startsWith('/sync-jobs')) return ['data']
   if (pathname.startsWith('/runs')) return ['operations']
+  if (pathname.startsWith('/settings')) return ['system']
   return []
 }
 
@@ -76,6 +84,7 @@ function findGroup(pathname: string, routes: MenuRoute[] = menuRoutes): MenuRout
 
 export function breadcrumbFor(pathname: string): string[] {
   if (pathname.startsWith('/data-sources/')) return ['数据管理', '数据源', '数据源详情']
+  if (pathname.startsWith('/sync-jobs/')) return ['数据管理', '同步任务', '任务详情']
   if (pathname.startsWith('/runs/')) return ['运行中心', '运行历史', '运行详情']
   const groups = findGroup(pathname)
   const leaf = flattenMenuRoutes().find((route) => route.path === pathname)
