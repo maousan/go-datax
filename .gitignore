@@ -34,8 +34,13 @@ Thumbs.db
 
 # Project specific ignores
 bin/
-dist/
+/dist/
 DataX-java/
+
+# Frontend
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
 
 # Build artifacts
 *.log

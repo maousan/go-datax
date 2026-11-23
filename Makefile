@@ -11,6 +11,9 @@ VERSION := $(shell date +%Y%m%d%H%M%S)
 # Get project name (current directory name)
 PROJECT_NAME := $(shell basename $(PWD))
 
+# Frontend directory
+WEB_DIR := web
+
 # Detect project structure and get all applications
 APPS := $(shell \
 	if [ -d cmd ] && [ $$(find cmd -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) -gt 0 ]; then \
@@ -23,12 +26,12 @@ APPS := $(shell \
 )
 
 # Default target
-.PHONY: all clean build release tidy help
+.PHONY: all clean build release tidy web help
 
 all: build
 
 # Build for current platform (development mode)
-build: clean tidy
+build: tidy web
 	@mkdir -p $(DIST_DIR)
 	@echo "Building for current platform..."
 	@$(foreach app,$(APPS), \
@@ -37,7 +40,7 @@ build: clean tidy
 	@echo "Build completed!"
 
 # Release build (cross-compilation)
-release: clean tidy
+release: tidy web
 	@mkdir -p $(DIST_DIR)
 	@echo "Starting release build..."
 	@$(foreach platform,$(PLATFORMS), \
@@ -50,9 +53,20 @@ tidy:
 	@echo "Tidying dependencies..."
 	@go mod tidy
 
+# Build frontend assets embedded into datax-server
+# clean 作为前置保证 dist 先清空，避免并行构建时嵌入旧产物或只剩占位文件。
+web: clean
+	@echo "Building web assets..."
+	@pnpm --dir $(WEB_DIR) install --frozen-lockfile
+	@pnpm --dir $(WEB_DIR) build
+	@touch $(WEB_DIR)/dist/.gitkeep
+
 # Clean dist directory
 clean:
 	@rm -rf $(DIST_DIR)
+	@rm -rf $(WEB_DIR)/dist/assets
+	@rm -f $(WEB_DIR)/dist/index.html
+	@touch $(WEB_DIR)/dist/.gitkeep
 	@echo "Cleanup completed"
 
 # Build single application for development (current platform)
@@ -122,6 +136,7 @@ help:
 	@echo "  all     - Build binaries for current platform (default)"
 	@echo "  build   - Build binaries for current platform"
 	@echo "  release - Cross-compile release versions for all platforms"
+	@echo "  web     - Install frontend dependencies and build web assets"
 	@echo "  tidy    - Tidy Go module dependencies"
 	@echo "  clean   - Clean dist directory"
 	@echo "  help    - Show this help information"
