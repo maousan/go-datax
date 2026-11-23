@@ -13,6 +13,7 @@ import {
 } from '@arco-design/web-react'
 import type { TableColumnProps } from '@arco-design/web-react'
 import {
+  IconApps,
   IconCaretDown,
   IconCaretRight,
   IconCode,
@@ -369,6 +370,8 @@ function TableTree({
   onSelect: (table: ExplorerTable) => void
 }) {
   const tablesQuery = useTables(dataSourceId, schema, true)
+  const [openTables, setOpenTables] = useState(false)
+  const [openViews, setOpenViews] = useState(false)
   const tables = (tablesQuery.data ?? []).filter((item) =>
     item.name.toLowerCase().includes(filter.toLowerCase()),
   )
@@ -383,12 +386,11 @@ function TableTree({
   if (tablesQuery.isError) {
     return <div className={styles.treeHint}>{errorText(tablesQuery.error, '读取表列表失败')}</div>
   }
-  if (tables.length === 0) {
-    return <div className={styles.treeHint}>没有匹配的表</div>
-  }
 
   const tableItems = tables.filter((item) => item.type !== 'view')
   const viewItems = tables.filter((item) => item.type === 'view')
+  const tablesExpanded = filter ? true : openTables
+  const viewsExpanded = filter ? true : openViews
 
   const renderItem = (table: ExplorerTable) => (
     <div
@@ -405,23 +407,40 @@ function TableTree({
 
   return (
     <div className={styles.tables}>
-      {tableItems.length > 0 ? (
-        <>
-          <div className={styles['tree-group']}>
-            <span>表</span>
-            <span>{tableItems.length}</span>
-          </div>
-          {tableItems.map(renderItem)}
-        </>
+      <div className={styles['tree-group']} onClick={() => setOpenTables(!openTables)}>
+        {tablesExpanded ? <IconCaretDown /> : <IconCaretRight />}
+        <IconApps className={styles['group-table-icon']} />
+        <span>表</span>
+        {tableItems.length > 0 ? (
+          <span className={styles['group-count']}>{tableItems.length}</span>
+        ) : null}
+      </div>
+      {tablesExpanded ? (
+        <div className={styles['tree-group-items']}>
+          {tableItems.length > 0 ? (
+            tableItems.map(renderItem)
+          ) : (
+            <div className={styles.treeHint}>没有表</div>
+          )}
+        </div>
       ) : null}
-      {viewItems.length > 0 ? (
-        <>
-          <div className={styles['tree-group']}>
-            <span>视图</span>
-            <span>{viewItems.length}</span>
-          </div>
-          {viewItems.map(renderItem)}
-        </>
+
+      <div className={styles['tree-group']} onClick={() => setOpenViews(!openViews)}>
+        {viewsExpanded ? <IconCaretDown /> : <IconCaretRight />}
+        <IconEye className={styles['group-view-icon']} />
+        <span>视图</span>
+        {viewItems.length > 0 ? (
+          <span className={styles['group-count']}>{viewItems.length}</span>
+        ) : null}
+      </div>
+      {viewsExpanded ? (
+        <div className={styles['tree-group-items']}>
+          {viewItems.length > 0 ? (
+            viewItems.map(renderItem)
+          ) : (
+            <div className={styles.treeHint}>没有视图</div>
+          )}
+        </div>
       ) : null}
     </div>
   )
@@ -527,7 +546,7 @@ export default function DataSourceDetailPage() {
                     }}
                   >
                     {open ? <IconCaretDown /> : <IconCaretRight />}
-                    <IconStorage />
+                    <IconStorage className={styles['schema-icon']} />
                     <span className={styles['schema-name']}>{item.name}</span>
                     <span className={styles['schema-count']}>{item.tableCount}</span>
                   </div>
