@@ -387,20 +387,42 @@ function TableTree({
     return <div className={styles.treeHint}>没有匹配的表</div>
   }
 
+  const tableItems = tables.filter((item) => item.type !== 'view')
+  const viewItems = tables.filter((item) => item.type === 'view')
+
+  const renderItem = (table: ExplorerTable) => (
+    <div
+      key={table.name}
+      className={
+        selectedTable === table.name ? styles['tree-item-active'] : styles['tree-item']
+      }
+      onClick={() => onSelect(table)}
+    >
+      {table.type === 'view' ? <IconEye /> : <IconFile />}
+      <span>{table.name}</span>
+    </div>
+  )
+
   return (
     <div className={styles.tables}>
-      {tables.map((table) => (
-        <div
-          key={table.name}
-          className={
-            selectedTable === table.name ? styles['tree-item-active'] : styles['tree-item']
-          }
-          onClick={() => onSelect(table)}
-        >
-          {table.type === 'view' ? <IconEye /> : <IconFile />}
-          <span>{table.name}</span>
-        </div>
-      ))}
+      {tableItems.length > 0 ? (
+        <>
+          <div className={styles['tree-group']}>
+            <span>表</span>
+            <span>{tableItems.length}</span>
+          </div>
+          {tableItems.map(renderItem)}
+        </>
+      ) : null}
+      {viewItems.length > 0 ? (
+        <>
+          <div className={styles['tree-group']}>
+            <span>视图</span>
+            <span>{viewItems.length}</span>
+          </div>
+          {viewItems.map(renderItem)}
+        </>
+      ) : null}
     </div>
   )
 }
