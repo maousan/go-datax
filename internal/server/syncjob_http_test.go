@@ -532,3 +532,167 @@ func TestSyncJobRetryPolicy(t *testing.T) {
 		t.Errorf("invalid retryMax status = %d, want 400", rec.Code)
 	}
 }
+
+func rawStreamContent() map[string]any {
+	return map[string]any{
+		"reader": map[string]any{
+			"name":      "streamreader",
+			"parameter": map[string]any{"sliceRecordCount": 1, "column": []any{"id"}},
+		},
+		"writer": map[string]any{
+			"name":      "streamwriter",
+			"parameter": map[string]any{"print": false},
+		},
+	}
+}
+
+func TestRawConfigGuardrails(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+
+	multi := map[string]any{
+		"name":          "multi-content",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{rawStreamContent(), rawStreamContent()}},
+		},
+	}
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, multi)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("multi content status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var apiErr apiErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("error response is not JSON: %v", err)
+	}
+	if !strings.Contains(apiErr.Error.Message, "content[0]") {
+		t.Errorf("multi content message = %q", apiErr.Error.Message)
+	}
+
+	transformerContent := rawStreamContent()
+	transformerContent["transformer"] = []any{map[string]any{"name": "dx_filter"}}
+	transformer := map[string]any{
+		"name":          "with-transformer",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{transformerContent}},
+		},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, transformer)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("transformer status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("error response is not JSON: %v", err)
+	}
+	if !strings.Contains(apiErr.Error.Message, "transformer") {
+		t.Errorf("transformer message = %q", apiErr.Error.Message)
+	}
+
+	single := map[string]any{
+		"name":          "single-content",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{rawStreamContent()}},
+		},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, single)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("single content status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+type apiErrorResponse struct {
+	Error apiError `json:"error"`
+}
+
+func TestFormWriteModeValidation(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+	dir := t.TempDir()
+	reader := createSQLiteDataSourceForJob(t, handler, token, "mode-reader", dir)
+	pgWriter := createDataSource(t, handler, token, "mode-pg", "postgres",
+		"jdbc:postgresql://localhost:5432/test", "postgres", "postgres")
+	oracleWriter := createDataSource(t, handler, token, "mode-oracle", "oracle",
+		"jdbc:oracle:thin:@//db.example.com:1521/orcl", "scott", "tiger")
+
+	withWriteMode := func(name string, writerID int64, mode string) map[string]any {
+		body := formJobBody(name, reader.ID, writerID)
+		formDef := body["form"].(map[string]any)
+		writer := formDef["writer"].(map[string]any)
+		writer["writeMode"] = mode
+		return body
+	}
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		withWriteMode("pg-update", pgWriter.ID, "update"))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "不支持 writeMode") {
+		t.Fatalf("pg update status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		withWriteMode("pg-insert", pgWriter.ID, "insert"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("pg insert status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		withWriteMode("oracle-update-no-keys", oracleWriter.ID, "update"))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "需要指定主键列") {
+		t.Fatalf("oracle plain update status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		withWriteMode("oracle-update-keys", oracleWriter.ID, "update(id)"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("oracle update(id) status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		withWriteMode("oracle-update-missing", oracleWriter.ID, "update(missing)"))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "不在写入列中") {
+		t.Fatalf("oracle missing key status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLegacyRawGuardrailsOnRun(t *testing.T) {
+	dataStore := openTestStore(t)
+	_, handler := newRunTestServer(t, dataStore, nil, 2)
+	token := loginToken(t, handler, "admin", "secret")
+
+	multi := store.SyncJob{
+		Name:          "legacy-multi",
+		AuthoringMode: "raw",
+		Definition:    `{"job":{"content":[{"reader":{"name":"streamreader","parameter":{}},"writer":{"name":"streamwriter","parameter":{}}},{"reader":{"name":"streamreader","parameter":{}},"writer":{"name":"streamwriter","parameter":{}}}]}}`,
+	}
+	if err := dataStore.CreateSyncJob(&multi); err != nil {
+		t.Fatalf("CreateSyncJob() failed: %v", err)
+	}
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(multi.ID)+"/runs", token, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("legacy multi run status = %d, want 422 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "content[0]") {
+		t.Errorf("legacy multi message = %s", rec.Body.String())
+	}
+
+	transformer := store.SyncJob{
+		Name:          "legacy-transformer",
+		AuthoringMode: "raw",
+		Definition:    `{"job":{"content":[{"reader":{"name":"streamreader","parameter":{}},"writer":{"name":"streamwriter","parameter":{}},"transformer":[{"name":"dx_filter"}]}]}}`,
+	}
+	if err := dataStore.CreateSyncJob(&transformer); err != nil {
+		t.Fatalf("CreateSyncJob() failed: %v", err)
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(transformer.ID)+"/runs", token, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("legacy transformer run status = %d, want 422 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "transformer") {
+		t.Errorf("legacy transformer message = %s", rec.Body.String())
+	}
+}

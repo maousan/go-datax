@@ -371,6 +371,9 @@ func (s *Server) encodeDefinition(req syncJobRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := validateFormWriteMode(*req.Form, dataSources, true); err != nil {
+		return "", err
+	}
 	if _, err := materializeForm(*req.Form, dataSources); err != nil {
 		return "", err
 	}
@@ -402,6 +405,9 @@ func (s *Server) dataSourcesForForm(def formJobDefinition) (map[int64]store.Data
 
 func (s *Server) exportConfig(job store.SyncJob) (map[string]any, error) {
 	if job.AuthoringMode == "raw" {
+		if err := validateRawConfig(json.RawMessage(job.Definition)); err != nil {
+			return nil, err
+		}
 		var config map[string]any
 		if err := json.Unmarshal([]byte(job.Definition), &config); err != nil {
 			return nil, fmt.Errorf("解析任务配置失败: %v", err)
@@ -415,6 +421,9 @@ func (s *Server) exportConfig(job store.SyncJob) (map[string]any, error) {
 	}
 	dataSources, err := s.dataSourcesForForm(def)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateFormWriteMode(def, dataSources, false); err != nil {
 		return nil, err
 	}
 	return materializeForm(def, dataSources)

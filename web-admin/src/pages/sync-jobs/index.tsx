@@ -63,6 +63,7 @@ interface JobFormValues {
   writerTable?: string
   writerColumns?: string
   writerWriteMode?: string
+  writerUpdateKeys?: string
   channel?: number
   errorLimitRecord?: number
   errorLimitPercentage?: number
@@ -115,6 +116,8 @@ export default function SyncJobsPage() {
 
   const [form] = Form.useForm<JobFormValues>()
   const [searchForm] = Form.useForm<{ name?: string }>()
+  const writerDataSourceId = Form.useWatch('writerDataSourceId', form)
+  const writerWriteMode = Form.useWatch('writerWriteMode', form)
   const jobsQuery = useSyncJobs(query)
   const dataSourcesQuery = useDataSources('')
   const createMutation = useCreateSyncJob()
@@ -128,6 +131,13 @@ export default function SyncJobsPage() {
     value: item.id,
     label: `${item.name}（${item.type}）`,
   }))
+  const writerDataSource = (dataSourcesQuery.data ?? []).find(
+    (item) => item.id === writerDataSourceId,
+  )
+  const writerType = writerDataSource?.type
+  const supportsWriteMode = writerType !== 'postgres' && writerType !== 'mssql'
+  const showOracleUpdateKeys =
+    writerType === 'oracle' && (writerWriteMode ?? '').toLowerCase() === 'update'
 
   const handleSearch = () => {
     const name = (searchForm.getFieldValue('name') ?? '').trim()
@@ -165,6 +175,10 @@ export default function SyncJobsPage() {
       form.resetFields()
 
       if (job.authoringMode === 'form' && job.form) {
+        const rawWriteMode = (job.form.writer.writeMode || 'insert').trim()
+        const updateMatch = /^update\s*\((.*)\)$/i.exec(rawWriteMode)
+        const writeModeValue = updateMatch ? 'update' : rawWriteMode.toLowerCase()
+
         form.setFieldsValue({
           name: job.name,
           authoringMode: 'form',
@@ -176,7 +190,8 @@ export default function SyncJobsPage() {
           writerDataSourceId: job.form.writer.dataSourceId,
           writerTable: job.form.writer.table,
           writerColumns: job.form.writer.column.join(', '),
-          writerWriteMode: job.form.writer.writeMode || 'insert',
+          writerWriteMode: writeModeValue,
+          writerUpdateKeys: updateMatch ? updateMatch[1] : undefined,
           channel: job.form.setting.channel,
           errorLimitRecord: job.form.setting.errorLimit.record,
           errorLimitPercentage: job.form.setting.errorLimit.percentage,
@@ -253,6 +268,35 @@ export default function SyncJobsPage() {
           setFormError('读取列与写入列数量必须一致')
           return
         }
+
+        const writerSource = (dataSourcesQuery.data ?? []).find(
+          (item) => item.id === values.writerDataSourceId,
+        )
+        let writeMode = (values.writerWriteMode || 'insert').toLowerCase()
+        if (writerSource?.type === 'postgres' || writerSource?.type === 'mssql') {
+          // 这两种 writer 忽略 writeMode，固定写入 insert 以免产生错误预期。
+          writeMode = 'insert'
+        } else if (writerSource?.type === 'oracle') {
+          if (writeMode === 'update') {
+            const keys = splitColumns(values.writerUpdateKeys)
+            if (keys.length === 0) {
+              setFormError('Oracle 的 update 模式需要填写更新主键列')
+              return
+            }
+            const missing = keys.find(
+              (key) =>
+                !writerColumns.some((column) => column.toLowerCase() === key.toLowerCase()),
+            )
+            if (missing) {
+              setFormError(`更新主键列 ${missing} 不在写入列中`)
+              return
+            }
+            writeMode = `update(${keys.join(',')})`
+          } else {
+            writeMode = writeMode.toUpperCase()
+          }
+        }
+
         input = {
           name: values.name,
           authoringMode: 'form',
@@ -268,7 +312,7 @@ export default function SyncJobsPage() {
               dataSourceId: values.writerDataSourceId ?? 0,
               table: values.writerTable ?? '',
               column: writerColumns,
-              writeMode: values.writerWriteMode || 'insert',
+              writeMode,
             },
             setting: {
               channel: values.channel ?? 1,
@@ -568,9 +612,16 @@ export default function SyncJobsPage() {
           </Grid.Row>
 
           {mode === 'raw' ? (
-            <Form.Item label="DataX 配置">
-              <JsonEditor value={rawText} onChange={setRawText} />
-            </Form.Item>
+            <>
+              <Alert
+                type="info"
+                content="当前引擎仅执行 job.content[0]，且 transformer 尚未实现；保存时会校验并拒绝这类配置。"
+                style={{ marginBottom: 12 }}
+              />
+              <Form.Item label="DataX 配置">
+                <JsonEditor value={rawText} onChange={setRawText} />
+              </Form.Item>
+            </>
           ) : (
             <>
               <Card title="读取端" style={{ marginBottom: 16 }}>
@@ -643,18 +694,42 @@ export default function SyncJobsPage() {
                 >
                   <Input.TextArea rows={2} placeholder="id, name, email" />
                 </Form.Item>
-                <Form.Item field="writerWriteMode" label="写入模式">
-                  <Select
-                    options={[
-                      { value: 'insert', label: 'insert' },
-                      { value: 'replace', label: 'replace' },
-                      { value: 'update', label: 'update' },
-                    ]}
-                  />
-                </Form.Item>
+                {supportsWriteMode ? (
+                  <Form.Item field="writerWriteMode" label="写入模式">
+                    <Select
+                      options={[
+                        { value: 'insert', label: 'insert' },
+                        { value: 'replace', label: 'replace' },
+                        { value: 'update', label: 'update' },
+                      ]}
+                    />
+                  </Form.Item>
+                ) : (
+                  <Form.Item label="写入模式">
+                    <Typography.Text type="secondary">
+                      {writerType === 'postgres' ? 'PostgreSQL' : 'SQL Server'}{' '}
+                      写入器按主键自动 upsert，不支持 writeMode
+                    </Typography.Text>
+                  </Form.Item>
+                )}
+                {showOracleUpdateKeys ? (
+                  <Form.Item
+                    field="writerUpdateKeys"
+                    label="更新主键列"
+                    extra="逗号分隔，必须包含在写入列中，例如 id, code"
+                    rules={[{ required: true, message: '请输入更新主键列' }]}
+                  >
+                    <Input placeholder="id, code" />
+                  </Form.Item>
+                ) : null}
               </Card>
 
               <Card title="运行设置">
+                <Alert
+                  type="warning"
+                  content="错误记录/错误率上限当前引擎尚未实现，配置会保存但不会生效。"
+                  style={{ marginBottom: 12 }}
+                />
                 <Grid.Row gutter={16}>
                   <Grid.Col span={8}>
                     <Form.Item field="channel" label="并发通道数">

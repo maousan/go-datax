@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/longkeyy/go-datax/internal/store"
@@ -148,11 +149,19 @@ func validateRawConfig(raw json.RawMessage) error {
 	if !ok || len(contents) == 0 {
 		return fmt.Errorf("job.content 不能为空")
 	}
+	if len(contents) > 1 {
+		return fmt.Errorf("当前执行引擎只执行 job.content[0]，多表配置不会生效；请拆分为多个任务")
+	}
 
 	for index, item := range contents {
 		content, ok := item.(map[string]any)
 		if !ok {
 			return fmt.Errorf("job.content[%d] 格式不正确", index)
+		}
+		if transformer, exists := content["transformer"]; exists {
+			if list, ok := transformer.([]any); !ok || len(list) > 0 {
+				return fmt.Errorf("transformer 功能尚未实现，job.content[%d].transformer 不会生效", index)
+			}
 		}
 		for _, role := range []string{"reader", "writer"} {
 			endpoint, ok := content[role].(map[string]any)
@@ -168,6 +177,81 @@ func validateRawConfig(raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+var oracleUpdatePattern = regexp.MustCompile(`(?i)^update\s*\((.*)\)$`)
+
+// validateFormWriteMode 校验表单写入模式是否被对应 writer 支持。
+// strict 为 true 时用于保存，false 时用于运行旧任务（兼容历史配置）。
+func validateFormWriteMode(def formJobDefinition, dataSources map[int64]store.DataSource, strict bool) error {
+	writer, ok := dataSources[def.Writer.DataSourceID]
+	if !ok {
+		return fmt.Errorf("写入数据源不存在")
+	}
+
+	mode := strings.TrimSpace(def.Writer.WriteMode)
+	if mode == "" {
+		mode = "insert"
+	}
+	lower := strings.ToLower(mode)
+
+	switch writer.Type {
+	case "postgres", "mssql":
+		if strict && lower != "insert" {
+			return fmt.Errorf("%s 写入器不支持 writeMode=%s，会按主键自动 upsert", writer.Type, mode)
+		}
+	case "mysql", "sqlite":
+		switch lower {
+		case "insert", "replace", "update":
+		default:
+			return fmt.Errorf("%s 写入模式仅支持 insert、replace 或 update", writer.Type)
+		}
+	case "oracle":
+		upper := strings.ToUpper(mode)
+		switch {
+		case upper == "INSERT" || upper == "REPLACE":
+			return nil
+		case upper == "UPDATE":
+			return fmt.Errorf("Oracle 的 update 模式需要指定主键列，例如 update(id, code)")
+		case strings.HasPrefix(upper, "UPDATE("):
+			match := oracleUpdatePattern.FindStringSubmatch(mode)
+			if match == nil {
+				return fmt.Errorf("Oracle 的 update 模式格式应为 update(col1, col2)")
+			}
+			keys := splitColumnList(match[1])
+			if len(keys) == 0 {
+				return fmt.Errorf("Oracle 的 update 模式至少需要一个主键列")
+			}
+			for _, key := range keys {
+				if !containsColumnFold(def.Writer.Column, key) {
+					return fmt.Errorf("更新主键列 %s 不在写入列中", key)
+				}
+			}
+		default:
+			return fmt.Errorf("Oracle 写入模式仅支持 INSERT、REPLACE 或 update(col1, col2)")
+		}
+	}
+	return nil
+}
+
+func splitColumnList(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func containsColumnFold(columns []string, want string) bool {
+	for _, column := range columns {
+		if strings.EqualFold(strings.TrimSpace(column), strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
 }
 
 // materialize 把表单定义展开为可执行的 DataX 配置。
