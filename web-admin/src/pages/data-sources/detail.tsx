@@ -411,6 +411,7 @@ export default function DataSourceDetailPage() {
   const dataSourceId = Number(params.id)
   const [selectedSchema, setSelectedSchema] = useState('')
   const [selectedTable, setSelectedTable] = useState('')
+  const [expandedSchema, setExpandedSchema] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
 
   const dsQuery = useDataSource(dataSourceId)
@@ -432,6 +433,7 @@ export default function DataSourceDetailPage() {
     )
   }, [schemas, ds?.username, ds?.jdbcUrl])
   const schema = selectedSchema || preferredSchema?.name || ''
+  const openSchema = expandedSchema === null ? preferredSchema?.name ?? '' : expandedSchema
 
   const visibleSchemas = useMemo(
     () => schemas.filter((item) => item.name.toLowerCase().includes(filter.toLowerCase())),
@@ -493,28 +495,30 @@ export default function DataSourceDetailPage() {
               <Empty description="没有可访问的数据库" />
             ) : null}
             {visibleSchemas.map((item) => {
-              const active = item.name === schema
+              const open = item.name === openSchema
               return (
                 <div key={item.name}>
                   <div
-                    className={active ? styles['schema-active'] : styles.schema}
+                    className={open ? styles['schema-active'] : styles.schema}
                     onClick={() => {
-                      setSelectedSchema(item.name)
-                      setSelectedTable('')
+                      setExpandedSchema(open ? '' : item.name)
                     }}
                   >
-                    {active ? <IconCaretDown /> : <IconCaretRight />}
+                    {open ? <IconCaretDown /> : <IconCaretRight />}
                     <IconStorage />
                     <span className={styles['schema-name']}>{item.name}</span>
                     <span className={styles['schema-count']}>{item.tableCount}</span>
                   </div>
-                  {active ? (
+                  {open ? (
                     <TableTree
                       dataSourceId={dataSourceId}
                       schema={item.name}
-                      selectedTable={selectedTable}
+                      selectedTable={selectedSchema === item.name ? selectedTable : ''}
                       filter={filter}
-                      onSelect={(table) => setSelectedTable(table.name)}
+                      onSelect={(table) => {
+                        setSelectedSchema(item.name)
+                        setSelectedTable(table.name)
+                      }}
                     />
                   ) : null}
                 </div>
