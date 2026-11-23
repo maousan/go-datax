@@ -83,3 +83,11 @@ export function apiPost<T>(
 ): Promise<T> {
   return apiRequest<T>('POST', path, body, options)
 }
+
+export function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiRequest<T>('PUT', path, body)
+}
+
+export function apiDelete(path: string): Promise<void> {
+  return apiRequest<void>('DELETE', path)
+}

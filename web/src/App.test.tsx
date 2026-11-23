@@ -1,79 +1,17 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router'
 import { http, HttpResponse } from 'msw'
-import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import App from './App'
-import AuthProvider from './auth/AuthProvider'
-import { TOKEN_STORAGE_KEY } from './auth/storage'
+import { describe, expect, it } from 'vitest'
+import {
+  ORIGIN,
+  TOKEN_KEY,
+  renderApp,
+  server,
+  setupTestServer,
+  submitLogin,
+} from './test/harness'
 
-const TOKEN_KEY = TOKEN_STORAGE_KEY
-const ORIGIN = 'http://localhost:3000'
-
-const server = setupServer(
-  http.get(`${ORIGIN}/api/v1/health`, () =>
-    HttpResponse.json({ status: 'ok', version: 'test-version' }),
-  ),
-  http.post(`${ORIGIN}/api/v1/auth/login`, async ({ request }) => {
-    const body = (await request.json()) as { username: string; password: string }
-    if (body.username === 'admin' && body.password === 'secret') {
-      return HttpResponse.json({
-        token: 'valid-token',
-        expiresAt: '2030-01-01T00:00:00Z',
-      })
-    }
-    return HttpResponse.json(
-      { error: { code: 'invalid_credentials', message: '用户名或密码错误' } },
-      { status: 401 },
-    )
-  }),
-  http.get(`${ORIGIN}/api/v1/auth/me`, ({ request }) => {
-    if (request.headers.get('Authorization') !== 'Bearer valid-token') {
-      return HttpResponse.json(
-        { error: { code: 'unauthorized', message: '请先登录' } },
-        { status: 401 },
-      )
-    }
-    return HttpResponse.json({ username: 'admin', expiresAt: '2030-01-01T00:00:00Z' })
-  }),
-)
-
-beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
-afterEach(() => {
-  server.resetHandlers()
-  localStorage.clear()
-})
-afterAll(() => server.close())
-
-function renderApp(path = '/', authenticated = true) {
-  localStorage.clear()
-  if (authenticated) {
-    localStorage.setItem(TOKEN_KEY, 'valid-token')
-  }
-
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={[path]}>
-          <App />
-        </MemoryRouter>
-      </AuthProvider>
-    </QueryClientProvider>,
-  )
-}
-
-async function submitLogin(password = 'secret') {
-  const user = userEvent.setup()
-  await user.type(await screen.findByPlaceholderText('用户名'), 'admin')
-  await user.type(screen.getByPlaceholderText('密码'), password)
-  await user.click(screen.getByRole('button', { name: /登\s*录/ }))
-}
+setupTestServer()
 
 describe('admin shell', () => {
   it('redirects unauthenticated visitors to the login page', async () => {
@@ -158,7 +96,6 @@ describe('admin shell', () => {
 
     await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull())
     expect(await screen.findByRole('button', { name: /登\s*录/ })).toBeInTheDocument()
-    expect(localStorage.getItem(TOKEN_KEY)).toBeNull()
   })
 
   it('shows an offline state when the health check fails', async () => {

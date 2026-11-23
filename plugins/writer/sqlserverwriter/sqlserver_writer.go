@@ -10,6 +10,7 @@ import (
 	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/factory"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
+	"github.com/longkeyy/go-datax/internal/sqlserverdsn"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -193,54 +194,7 @@ func (job *SQLServerWriterJob) connect() (*gorm.DB, error) {
 }
 
 func (job *SQLServerWriterJob) convertJdbcUrl(jdbcUrl string) (string, error) {
-	// 解析JDBC URL: jdbc:sqlserver://host:port;DatabaseName=database
-	if !strings.HasPrefix(jdbcUrl, "jdbc:sqlserver://") {
-		return "", fmt.Errorf("invalid SQL Server JDBC URL: %s", jdbcUrl)
-	}
-
-	// 移除jdbc:sqlserver://前缀
-	url := strings.TrimPrefix(jdbcUrl, "jdbc:sqlserver://")
-
-	// 分离host:port和参数
-	parts := strings.Split(url, ";")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid JDBC URL format: %s", jdbcUrl)
-	}
-
-	hostPort := parts[0]
-
-	// 解析参数
-	params := make(map[string]string)
-	for i := 1; i < len(parts); i++ {
-		if strings.Contains(parts[i], "=") {
-			kv := strings.Split(parts[i], "=")
-			if len(kv) == 2 {
-				params[kv[0]] = kv[1]
-			}
-		}
-	}
-
-	// 获取数据库名
-	database, exists := params["DatabaseName"]
-	if !exists || database == "" {
-		return "", fmt.Errorf("DatabaseName is required in JDBC URL")
-	}
-
-	// 构建SQL Server DSN字符串
-	dsn := fmt.Sprintf("sqlserver://%s:%s@%s?database=%s",
-		job.username,
-		job.password,
-		hostPort,
-		database)
-
-	// 添加其他参数
-	for key, value := range params {
-		if key != "DatabaseName" {
-			dsn += fmt.Sprintf("&%s=%s", key, value)
-		}
-	}
-
-	return dsn, nil
+	return sqlserverdsn.Build(jdbcUrl, job.username, job.password)
 }
 
 func (job *SQLServerWriterJob) executeSession(db *gorm.DB) error {

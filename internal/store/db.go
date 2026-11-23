@@ -1,23 +1,43 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 
-	_ "github.com/glebarez/go-sqlite"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
-// EnsureDatabase 创建（或打开）管理库并初始化基础设置。
-// 表结构由后续票据的迁移负责，这里只保证文件可用且启用 WAL。
-func EnsureDatabase(path string) error {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return fmt.Errorf("open database %s: %w", path, err)
-	}
-	defer db.Close()
+// Store 是管理库的入口，持有 GORM 连接。
+type Store struct {
+	db *gorm.DB
+}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("initialize database %s: %w", path, err)
+// Open 打开（或创建）管理库并执行迁移。
+func Open(path string) (*Store, error) {
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
+		TranslateError: true,
+		Logger:         gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
-	return nil
+
+	if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
+		return nil, fmt.Errorf("enable WAL on %s: %w", path, err)
+	}
+	if err := db.AutoMigrate(&DataSource{}); err != nil {
+		return nil, fmt.Errorf("migrate database %s: %w", path, err)
+	}
+
+	return &Store{db: db}, nil
+}
+
+// Close 关闭底层连接。
+func (s *Store) Close() error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }

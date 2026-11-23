@@ -7,23 +7,29 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/longkeyy/go-datax/internal/store"
 )
 
 const bearerPrefix = "Bearer "
 
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
-	auth    AuthConfig
-	version string
-	assets  fs.FS
-	tokens  *TokenService
-	handler http.Handler
+	auth        AuthConfig
+	version     string
+	assets      fs.FS
+	tokens      *TokenService
+	dataStore *store.Store
+	handler     http.Handler
 }
 
 // New 创建一个管理台服务。assets 是前端构建产物的根文件系统（index.html 位于根）。
-func New(cfg Config, version string, assets fs.FS) (*Server, error) {
+func New(cfg Config, version string, assets fs.FS, dataStore *store.Store) (*Server, error) {
 	if assets == nil {
 		return nil, fmt.Errorf("assets filesystem is required")
+	}
+	if dataStore == nil {
+		return nil, fmt.Errorf("data store is required")
 	}
 
 	tokens, err := NewTokenService(cfg.Auth)
@@ -32,10 +38,11 @@ func New(cfg Config, version string, assets fs.FS) (*Server, error) {
 	}
 
 	s := &Server{
-		auth:    cfg.Auth,
-		version: version,
-		assets:  assets,
-		tokens:  tokens,
+		auth:        cfg.Auth,
+		version:     version,
+		assets:      assets,
+		tokens:      tokens,
+		dataStore: dataStore,
 	}
 	s.handler = s.routes()
 	return s, nil
@@ -56,6 +63,14 @@ func (s *Server) routes() http.Handler {
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/v1/auth/me", s.handleMe)
 	protected.HandleFunc("/api/v1/auth/me", methodNotAllowed(http.MethodGet))
+
+	protected.HandleFunc("GET /api/v1/data-sources", s.handleListDataSources)
+	protected.HandleFunc("POST /api/v1/data-sources", s.handleCreateDataSource)
+	protected.HandleFunc("POST /api/v1/data-sources/test", s.handleTestDataSource)
+	protected.HandleFunc("GET /api/v1/data-sources/{id}", s.handleGetDataSource)
+	protected.HandleFunc("PUT /api/v1/data-sources/{id}", s.handleUpdateDataSource)
+	protected.HandleFunc("DELETE /api/v1/data-sources/{id}", s.handleDeleteDataSource)
+
 	protected.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})

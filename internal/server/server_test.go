@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/longkeyy/go-datax/internal/store"
 )
 
 func testAuthConfig(t *testing.T) AuthConfig {
@@ -34,6 +35,12 @@ func testAuthConfig(t *testing.T) AuthConfig {
 func newTestServer(t *testing.T, assets map[string]string, auth AuthConfig) (*Server, http.Handler) {
 	t.Helper()
 
+	return newTestServerWithStore(t, assets, auth, openTestStore(t))
+}
+
+func newTestServerWithStore(t *testing.T, assets map[string]string, auth AuthConfig, dataStore *store.Store) (*Server, http.Handler) {
+	t.Helper()
+
 	fsys := fstest.MapFS{}
 	for name, content := range assets {
 		fsys[name] = &fstest.MapFile{Data: []byte(content)}
@@ -42,11 +49,22 @@ func newTestServer(t *testing.T, assets map[string]string, auth AuthConfig) (*Se
 	cfg := DefaultConfig("")
 	cfg.Auth = auth
 
-	srv, err := New(cfg, "test-version", fsys)
+	srv, err := New(cfg, "test-version", fsys, dataStore)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 	return srv, srv.Handler()
+}
+
+func openTestStore(t *testing.T) *store.Store {
+	t.Helper()
+
+	dataStore, err := store.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatalf("store.Open() failed: %v", err)
+	}
+	t.Cleanup(func() { _ = dataStore.Close() })
+	return dataStore
 }
 
 func newTestHandler(t *testing.T, assets map[string]string) http.Handler {

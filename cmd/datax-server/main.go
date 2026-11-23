@@ -70,16 +70,19 @@ func main() {
 	if err := server.EnsureDataDirs(cfg); err != nil {
 		log.Fatalf("准备数据目录失败: %v", err)
 	}
-	if err := store.EnsureDatabase(cfg.DatabasePath()); err != nil {
+
+	dataStore, err := store.Open(cfg.DatabasePath())
+	if err != nil {
 		log.Fatalf("初始化管理库失败: %v", err)
 	}
+	defer dataStore.Close()
 
 	assets, err := fs.Sub(webassets.Dist, "dist")
 	if err != nil {
 		log.Fatalf("加载内嵌前端资源失败: %v", err)
 	}
 
-	srv, err := server.New(cfg, Version, assets)
+	srv, err := server.New(cfg, Version, assets, dataStore)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}
