@@ -1,6 +1,7 @@
 import { PlusOutlined } from '@ant-design/icons'
 import {
   Alert,
+  App as AntApp,
   Button,
   Card,
   Form,
@@ -73,6 +74,7 @@ export default function DataSourcesPage() {
   const [pageError, setPageError] = useState('')
 
   const [form] = Form.useForm<DataSourceInput>()
+  const { message } = AntApp.useApp()
   const selectedType = Form.useWatch('type', form) ?? 'mysql'
   const listQuery = useDataSources(query)
   const createMutation = useCreateDataSource()
@@ -159,7 +161,12 @@ export default function DataSourcesPage() {
       const body = editing
         ? { id: editing.id, ...values, properties: editing.properties }
         : { ...values, properties: {} }
-      setTestResult(await testDataSource(body))
+      const result = await testDataSource(body)
+      if (result.ok) {
+        message.success(`连接成功（${result.latencyMs} ms）`)
+      } else {
+        setTestResult(result)
+      }
     } catch (err) {
       setTestResult(testFailure(err))
     } finally {
@@ -170,7 +177,12 @@ export default function DataSourcesPage() {
   const testSaved = async (item: DataSource) => {
     setPageTestResult(null)
     try {
-      setPageTestResult(await testDataSource({ id: item.id }))
+      const result = await testDataSource({ id: item.id })
+      if (result.ok) {
+        message.success(`连接成功（${result.latencyMs} ms）`)
+      } else {
+        setPageTestResult(result)
+      }
     } catch (err) {
       setPageTestResult(testFailure(err))
     }
