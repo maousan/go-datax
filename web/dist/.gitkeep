@@ -1,2 +1,0 @@
-# 占位文件：保证前端未构建时 go:embed 仍可编译。
-# 执行 `pnpm --dir web build`（或 make build）后会生成真正的 dist 内容。
