@@ -25,7 +25,7 @@ import {
   IconSearch,
   IconStorage,
 } from '@arco-design/web-react/icon'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import { useDataSource, type DataSourceType } from '../../api/dataSources'
@@ -130,6 +130,27 @@ function DataGrid({
   )
 }
 
+function useFillHeight(offset: number) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState(240)
+
+  useEffect(() => {
+    const element = ref.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver((entries) => {
+      const available = entries[0]?.contentRect.height
+      if (available) {
+        setHeight(Math.max(120, Math.floor(available - offset)))
+      }
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [offset])
+
+  return [ref, height] as const
+}
+
 function TableDataPane({
   dataSourceId,
   schema,
@@ -158,6 +179,7 @@ function TableDataPane({
   const result = rowsQuery.data
   const columns = result?.columns ?? []
   const rows = useMemo(() => (result ? gridRows(result, (page - 1) * pageSize) : []), [result, page, pageSize])
+  const [tableRef, tableHeight] = useFillHeight(90)
 
   return (
     <div className={styles.pane}>
@@ -172,7 +194,7 @@ function TableDataPane({
             setPage(1)
             setWhere(whereInput.trim())
           }}
-          style={{ width: 320 }}
+          style={{ width: 260 }}
         />
         <Input
           allowClear
@@ -183,7 +205,7 @@ function TableDataPane({
             setPage(1)
             setOrderBy(orderInput.trim())
           }}
-          style={{ width: 220 }}
+          style={{ width: 180 }}
         />
         <Button
           type="primary"
@@ -199,9 +221,6 @@ function TableDataPane({
         <Button icon={<IconRefresh />} loading={rowsQuery.isFetching} onClick={() => rowsQuery.refetch()}>
           刷新
         </Button>
-        <Typography.Text type="secondary">
-          {result ? `共 ${result.total} 行` : '按条件筛选表数据'}
-        </Typography.Text>
       </div>
 
       {rowsQuery.isError ? (
@@ -212,26 +231,31 @@ function TableDataPane({
         />
       ) : null}
 
-      <Spin loading={rowsQuery.isLoading} style={{ display: 'block' }}>
-        <Table<Record<string, CellValue>>
-          rowKey="__index"
-          columns={gridColumns(columns)}
-          data={rows}
-          scroll={{ x: Math.max(columns.length * 180 + 64, 600) }}
-          pagination={{
-            current: page,
-            pageSize,
-            total: result?.total ?? 0,
-            showTotal: true,
-            sizeCanChange: true,
-            onChange: (nextPage, nextPageSize) => {
-              setPage(nextPage)
-              setPageSize(nextPageSize)
-            },
-          }}
-          noDataElement={<Empty description="当前结果集没有任何记录" />}
-        />
-      </Spin>
+      <div ref={tableRef} className={styles['table-fill']}>
+        <Spin loading={rowsQuery.isLoading} style={{ display: 'block' }}>
+          <Table<Record<string, CellValue>>
+            rowKey="__index"
+            columns={gridColumns(columns)}
+            data={rows}
+            scroll={{
+              x: Math.max(columns.length * 180 + 64, 600),
+              y: tableHeight,
+            }}
+            pagination={{
+              current: page,
+              pageSize,
+              total: result?.total ?? 0,
+              showTotal: true,
+              sizeCanChange: true,
+              onChange: (nextPage, nextPageSize) => {
+                setPage(nextPage)
+                setPageSize(nextPageSize)
+              },
+            }}
+            noDataElement={<Empty description="当前结果集没有任何记录" />}
+          />
+        </Spin>
+      </div>
     </div>
   )
 }
@@ -246,6 +270,7 @@ function StructurePane({
   table: string
 }) {
   const columnsQuery = useColumns(dataSourceId, schema, table, true)
+  const [tableRef, tableHeight] = useFillHeight(42)
   const columns: TableColumnProps<Column>[] = [
     { title: '序号', dataIndex: 'position', width: 64 },
     { title: '字段名', dataIndex: 'name', width: 160 },
@@ -280,15 +305,18 @@ function StructurePane({
           style={{ marginBottom: 12 }}
         />
       ) : null}
-      <Table<Column>
-        rowKey="name"
-        tableLayoutFixed
-        columns={columns}
-        data={columnsQuery.data ?? []}
-        loading={columnsQuery.isLoading}
-        pagination={false}
-        noDataElement={<Empty description="没有字段信息" />}
-      />
+      <div ref={tableRef} className={styles['table-fill']}>
+        <Table<Column>
+          rowKey="name"
+          tableLayoutFixed
+          columns={columns}
+          data={columnsQuery.data ?? []}
+          loading={columnsQuery.isLoading}
+          pagination={false}
+          scroll={{ y: tableHeight }}
+          noDataElement={<Empty description="没有字段信息" />}
+        />
+      </div>
     </div>
   )
 }
