@@ -28,10 +28,19 @@ type RetentionConfig struct {
 	MaxLogBytes int64 `json:"maxLogBytes"`
 }
 
+// AuthConfig 描述管理台的唯一账号与令牌设置。
+type AuthConfig struct {
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	TokenTTL  string `json:"tokenTTL"`
+	JWTSecret string `json:"jwtSecret"`
+}
+
 // Config 是 datax-server 的完整配置。
 type Config struct {
 	Listen    string          `json:"listen"`
 	DataDir   string          `json:"dataDir"`
+	Auth      AuthConfig      `json:"auth"`
 	DataX     DataXConfig     `json:"datax"`
 	Retention RetentionConfig `json:"retention"`
 }
@@ -41,6 +50,9 @@ func DefaultConfig(dataDir string) Config {
 	return Config{
 		Listen:  DefaultListen,
 		DataDir: dataDir,
+		Auth: AuthConfig{
+			TokenTTL: "12h",
+		},
 		Retention: RetentionConfig{
 			MaxRuns:     defaultMaxRuns,
 			MaxAgeDays:  defaultMaxAgeDays,

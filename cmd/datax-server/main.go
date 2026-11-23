@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/longkeyy/go-datax/internal/server"
@@ -20,6 +23,11 @@ import (
 var Version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
+		runHashPassword()
+		return
+	}
+
 	var (
 		configPath  string
 		listenAddr  string
@@ -50,6 +58,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
+
+	// 认证配置先补齐并写盘，再应用命令行覆盖，避免把一次性 flag 持久化。
+	generated, err := server.InitializeAuth(&cfg, configPath)
+	if err != nil {
+		log.Fatalf("初始化认证配置失败: %v", err)
+	}
+
 	cfg = cfg.WithOverrides(listenAddr, dataDir)
 
 	if err := server.EnsureDataDirs(cfg); err != nil {
@@ -64,9 +79,13 @@ func main() {
 		log.Fatalf("加载内嵌前端资源失败: %v", err)
 	}
 
-	srv, err := server.New(Version, assets)
+	srv, err := server.New(cfg, Version, assets)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
+	}
+
+	if generated.Password != "" {
+		log.Printf("已生成管理账号 %s，初始密码：%s（仅显示一次，请妥善保存）", cfg.Auth.Username, generated.Password)
 	}
 
 	httpServer := &http.Server{
@@ -91,4 +110,29 @@ func resolveDataDir(flagValue string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "go-datax-admin"), nil
+}
+
+// runHashPassword 从标准输入读取明文并输出 bcrypt 哈希。
+// 不使用命令行参数传递密码，避免留在 shell 历史与进程列表中。
+func runHashPassword() {
+	info, err := os.Stdin.Stat()
+	interactive := err == nil && info.Mode()&os.ModeCharDevice != 0
+	if interactive {
+		fmt.Fprint(os.Stderr, "请输入密码: ")
+	}
+
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		log.Fatalf("读取密码失败: %v", err)
+	}
+	plain := strings.TrimRight(line, "\r\n")
+	if plain == "" {
+		log.Fatal("密码不能为空")
+	}
+
+	hash, err := server.HashPassword(plain)
+	if err != nil {
+		log.Fatalf("生成密码哈希失败: %v", err)
+	}
+	fmt.Println(hash)
 }

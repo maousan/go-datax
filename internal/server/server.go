@@ -9,22 +9,33 @@ import (
 	"strings"
 )
 
+const bearerPrefix = "Bearer "
+
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
+	auth    AuthConfig
 	version string
 	assets  fs.FS
+	tokens  *TokenService
 	handler http.Handler
 }
 
 // New 创建一个管理台服务。assets 是前端构建产物的根文件系统（index.html 位于根）。
-func New(version string, assets fs.FS) (*Server, error) {
+func New(cfg Config, version string, assets fs.FS) (*Server, error) {
 	if assets == nil {
 		return nil, fmt.Errorf("assets filesystem is required")
 	}
 
+	tokens, err := NewTokenService(cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
+		auth:    cfg.Auth,
 		version: version,
 		assets:  assets,
+		tokens:  tokens,
 	}
 	s.handler = s.routes()
 	return s, nil
@@ -37,10 +48,19 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Allow", "GET")
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "健康检查只支持 GET")
+	mux.HandleFunc("/api/v1/health", methodNotAllowed(http.MethodGet))
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("/api/v1/auth/login", methodNotAllowed(http.MethodPost))
+
+	// 受保护子树：后续业务端点只需注册在这里，默认就要求登录。
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/v1/auth/me", s.handleMe)
+	protected.HandleFunc("/api/v1/auth/me", methodNotAllowed(http.MethodGet))
+	protected.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
+	mux.Handle("/api/v1/", s.requireAuth(protected))
+
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
@@ -117,6 +137,13 @@ func isAssetRequest(name string) bool {
 		".json": true, ".txt": true, ".webmanifest": true,
 	}
 	return assetExtensions[strings.ToLower(path.Ext(name))]
+}
+
+func methodNotAllowed(allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", allow)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不支持")
+	}
 }
 
 type apiError struct {

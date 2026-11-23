@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +11,27 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-func newTestHandler(t *testing.T, assets map[string]string) http.Handler {
+func testAuthConfig(t *testing.T) AuthConfig {
+	t.Helper()
+
+	hash, err := HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() failed: %v", err)
+	}
+	return AuthConfig{
+		Username:  "admin",
+		Password:  hash,
+		TokenTTL:  "12h",
+		JWTSecret: strings.Repeat("s", minJWTSecretBytes),
+	}
+}
+
+func newTestServer(t *testing.T, assets map[string]string, auth AuthConfig) (*Server, http.Handler) {
 	t.Helper()
 
 	fsys := fstest.MapFS{}
@@ -19,11 +39,92 @@ func newTestHandler(t *testing.T, assets map[string]string) http.Handler {
 		fsys[name] = &fstest.MapFile{Data: []byte(content)}
 	}
 
-	srv, err := New("test-version", fsys)
+	cfg := DefaultConfig("")
+	cfg.Auth = auth
+
+	srv, err := New(cfg, "test-version", fsys)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
-	return srv.Handler()
+	return srv, srv.Handler()
+}
+
+func newTestHandler(t *testing.T, assets map[string]string) http.Handler {
+	t.Helper()
+	_, handler := newTestServer(t, assets, testAuthConfig(t))
+	return handler
+}
+
+func postJSON(t *testing.T, handler http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var reader io.Reader
+	switch v := body.(type) {
+	case string:
+		reader = strings.NewReader(v)
+	default:
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body: %v", err)
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func authorizedRequest(method, path, token string) *http.Request {
+	req := httptest.NewRequest(method, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req
+}
+
+func loginToken(t *testing.T, handler http.Handler, username, password string) string {
+	t.Helper()
+
+	rec := postJSON(t, handler, "/api/v1/auth/login", map[string]string{
+		"username": username,
+		"password": password,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("login response is not JSON: %v", err)
+	}
+	if body.Token == "" {
+		t.Fatal("login returned an empty token")
+	}
+	return body.Token
+}
+
+func signedExpiredToken(t *testing.T, auth AuthConfig) string {
+	t.Helper()
+
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		Subject:   auth.Username,
+		Issuer:    tokenIssuer,
+		IssuedAt:  jwt.NewNumericDate(now.Add(-2 * time.Hour)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(-time.Hour)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	signed, err := token.SignedString([]byte(auth.JWTSecret))
+	if err != nil {
+		t.Fatalf("sign expired token: %v", err)
+	}
+	return signed
 }
 
 func TestHealthReportsStatusAndVersion(t *testing.T) {
@@ -69,12 +170,183 @@ func TestHealthRejectsNonGET(t *testing.T) {
 	}
 }
 
+func TestLoginReturnsTokenAndExpiry(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+
+	rec := postJSON(t, handler, "/api/v1/auth/login", map[string]string{
+		"username": "admin",
+		"password": "secret",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expiresAt"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if body.Token == "" {
+		t.Error("token is empty")
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, body.ExpiresAt)
+	if err != nil {
+		t.Fatalf("expiresAt %q is not RFC3339: %v", body.ExpiresAt, err)
+	}
+	if time.Until(expiresAt) <= 11*time.Hour {
+		t.Errorf("expiresAt is too soon: %v", expiresAt)
+	}
+}
+
+func TestLoginRejectsInvalidCredentialsWithUniformError(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+
+	wrongPassword := postJSON(t, handler, "/api/v1/auth/login", map[string]string{
+		"username": "admin",
+		"password": "wrong",
+	})
+	unknownUser := postJSON(t, handler, "/api/v1/auth/login", map[string]string{
+		"username": "someone-else",
+		"password": "secret",
+	})
+
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"wrong password": wrongPassword,
+		"unknown user":   unknownUser,
+	} {
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want %d", name, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	if wrongPassword.Body.String() != unknownUser.Body.String() {
+		t.Errorf("login errors leak which field was wrong: %q vs %q",
+			wrongPassword.Body.String(), unknownUser.Body.String())
+	}
+}
+
+func TestLoginRequiresUsernameAndPassword(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+
+	rec := postJSON(t, handler, "/api/v1/auth/login", map[string]string{"username": "admin"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestMeRequiresValidToken(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+
+	for name, token := range map[string]string{
+		"missing token":   "",
+		"malformed token": "not-a-jwt",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, authorizedRequest(http.MethodGet, "/api/v1/auth/me", token))
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want %d", name, rec.Code, http.StatusUnauthorized)
+		}
+	}
+}
+
+func TestMeReturnsCurrentUser(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authorizedRequest(http.MethodGet, "/api/v1/auth/me", token))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Username  string `json:"username"`
+		ExpiresAt string `json:"expiresAt"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if body.Username != "admin" {
+		t.Errorf("username = %q, want admin", body.Username)
+	}
+	if _, err := time.Parse(time.RFC3339, body.ExpiresAt); err != nil {
+		t.Errorf("expiresAt %q is not RFC3339: %v", body.ExpiresAt, err)
+	}
+}
+
+func TestExpiredTokenIsRejected(t *testing.T) {
+	auth := testAuthConfig(t)
+	_, handler := newTestServer(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	}, auth)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authorizedRequest(http.MethodGet, "/api/v1/auth/me", signedExpiredToken(t, auth)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestTokenSurvivesServerRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "server.json")
+	cfg := DefaultConfig(dataDir)
+	generated, err := InitializeAuth(&cfg, configPath)
+	if err != nil {
+		t.Fatalf("InitializeAuth() failed: %v", err)
+	}
+
+	assets := map[string]string{"index.html": "<html><body>app-shell</body></html>"}
+	_, first := newTestServer(t, assets, cfg.Auth)
+	token := loginToken(t, first, cfg.Auth.Username, generated.Password)
+
+	reloaded, err := LoadOrCreate(configPath, dataDir)
+	if err != nil {
+		t.Fatalf("LoadOrCreate() failed: %v", err)
+	}
+	_, restarted := newTestServer(t, assets, reloaded.Auth)
+
+	rec := httptest.NewRecorder()
+	restarted.ServeHTTP(rec, authorizedRequest(http.MethodGet, "/api/v1/auth/me", token))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status after restart = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthEndpointsRejectWrongMethods(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET login status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestFrontendRoutesFallBackToIndex(t *testing.T) {
 	handler := newTestHandler(t, map[string]string{
 		"index.html": "<html><body>app-shell</body></html>",
 	})
 
-	for _, path := range []string{"/", "/runs", "/sync-jobs/42/edit", "/sync-jobs/v1.2"} {
+	for _, path := range []string{"/", "/runs", "/sync-jobs/42/edit", "/sync-jobs/v1.2", "/login"} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
@@ -88,13 +360,27 @@ func TestFrontendRoutesFallBackToIndex(t *testing.T) {
 	}
 }
 
-func TestUnknownAPIReturnsJSON404(t *testing.T) {
+func TestUnknownAPIRequiresAuthentication(t *testing.T) {
 	handler := newTestHandler(t, map[string]string{
 		"index.html": "<html><body>app-shell</body></html>",
 	})
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/does-not-exist", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestUnknownAPIWithTokenReturnsJSON404(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authorizedRequest(http.MethodGet, "/api/v1/does-not-exist", token))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
@@ -232,7 +518,7 @@ func TestWithOverridesPrefersCommandLineValues(t *testing.T) {
 	}
 
 	unchanged := cfg.WithOverrides("", "")
-	if unchanged != cfg {
+	if unchanged.Listen != cfg.Listen || unchanged.DataDir != cfg.DataDir {
 		t.Errorf("empty overrides changed config: %+v", unchanged)
 	}
 }

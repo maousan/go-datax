@@ -1,7 +1,16 @@
-import { DashboardOutlined, DatabaseOutlined, HistoryOutlined, SyncOutlined } from '@ant-design/icons'
-import { Layout, Menu, Space, Tag, Typography } from 'antd'
-import { Link, Outlet, useLocation } from 'react-router'
+import {
+  DashboardOutlined,
+  DatabaseOutlined,
+  HistoryOutlined,
+  LogoutOutlined,
+  SyncOutlined,
+} from '@ant-design/icons'
+import { useQueryClient } from '@tanstack/react-query'
+import { Button, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router'
+import { useMe } from '../api/auth'
 import { useHealth } from '../api/health'
+import { useAuth } from '../auth/AuthContext'
 
 const NAV_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: <Link to="/">概览</Link> },
@@ -19,13 +28,23 @@ function selectedKey(pathname: string): string {
 
 export default function AppLayout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const health = useHealth()
+  const { token, logout } = useAuth()
+  const me = useMe(Boolean(token))
 
   const healthTag = health.isError
     ? { color: 'red', text: '服务未连接' }
     : health.isSuccess
       ? { color: 'green', text: `服务 ${health.data?.version ?? ''}` }
       : { color: 'default', text: '服务连接中' }
+
+  const handleLogout = () => {
+    logout()
+    queryClient.clear()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -47,8 +66,12 @@ export default function AppLayout() {
           <Typography.Title level={4} style={{ margin: 0 }}>
             数据同步管理
           </Typography.Title>
-          <Space>
+          <Space size="middle">
             <Tag color={healthTag.color}>{healthTag.text}</Tag>
+            {me.data?.username ? <Typography.Text>{me.data.username}</Typography.Text> : null}
+            <Button type="link" icon={<LogoutOutlined />} onClick={handleLogout}>
+              退出登录
+            </Button>
           </Space>
         </Layout.Header>
 
