@@ -28,6 +28,7 @@ type OracleWriterJob struct {
 	tables       []string
 	columns      []string
 	writeMode    string
+	updateKeys   []string
 	preSql       []string
 	postSql      []string
 	session      []string
@@ -43,6 +44,8 @@ type OracleWriterTask struct {
 	db            *sql.DB
 	table         string
 	insertStmt    *sql.Stmt
+	updateStmt    *sql.Stmt
+	updateArgs    []int
 	columns       []string
 	batchSize     int
 	insertTimeout int
@@ -99,9 +102,9 @@ func (job *OracleWriterJob) Init(config config.Configuration) error {
 	}
 
 	// 解析写入模式
-	job.writeMode = config.GetStringWithDefault("writeMode", "INSERT")
-	if job.writeMode != "INSERT" && job.writeMode != "UPDATE" && job.writeMode != "REPLACE" {
-		return fmt.Errorf("unsupported writeMode: %s, only INSERT/UPDATE/REPLACE are supported", job.writeMode)
+	job.writeMode = strings.TrimSpace(config.GetStringWithDefault("writeMode", "INSERT"))
+	if err := job.parseWriteMode(job.writeMode); err != nil {
+		return err
 	}
 
 	// 解析SQL配置
@@ -112,10 +115,54 @@ func (job *OracleWriterJob) Init(config config.Configuration) error {
 	// 解析批次大小
 	job.batchSize = config.GetIntWithDefault("batchSize", DefaultBatchSize)
 
-	log.Printf("Oracle writer job initialized, jdbcUrl: %s, tables: %v, columns: %v, writeMode: %s, batchSize: %d",
-		job.jdbcUrl, job.tables, job.columns, job.writeMode, job.batchSize)
+	log.Printf("Oracle writer job initialized, jdbcUrl: %s, tables: %v, columns: %v, writeMode: %s, updateKeys: %v, batchSize: %d",
+		job.jdbcUrl, job.tables, job.columns, job.writeMode, job.updateKeys, job.batchSize)
 
 	return nil
+}
+
+// parseWriteMode 支持 INSERT、REPLACE 与 update(col1, col2)。
+// update 模式按给定键列更新，未命中时插入。
+func (job *OracleWriterJob) parseWriteMode(raw string) error {
+	upper := strings.ToUpper(strings.TrimSpace(raw))
+
+	switch {
+	case upper == "INSERT", upper == "REPLACE":
+		return nil
+
+	case upper == "UPDATE":
+		return fmt.Errorf("writeMode UPDATE requires key columns, use update(col1, col2)")
+
+	case strings.HasPrefix(upper, "UPDATE(") && strings.HasSuffix(upper, ")"):
+		inner := strings.TrimSpace(raw[len("update(") : len(raw)-1])
+		for _, part := range strings.Split(inner, ",") {
+			key := strings.TrimSpace(part)
+			if key != "" {
+				job.updateKeys = append(job.updateKeys, key)
+			}
+		}
+		if len(job.updateKeys) == 0 {
+			return fmt.Errorf("writeMode update(...) requires at least one key column")
+		}
+		if !(len(job.columns) == 1 && job.columns[0] == "*") {
+			for _, key := range job.updateKeys {
+				found := false
+				for _, column := range job.columns {
+					if strings.EqualFold(column, key) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("update key %s is not in the column list", key)
+				}
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported writeMode: %s, only INSERT/REPLACE/update(col1, col2) are supported", raw)
+	}
 }
 
 func (job *OracleWriterJob) Split(mandatoryNumber int) ([]config.Configuration, error) {
@@ -256,6 +303,12 @@ func (task *OracleWriterTask) Init(config config.Configuration) error {
 		return err
 	}
 
+	if len(task.writerJob.updateKeys) > 0 {
+		if err := task.prepareUpdateStatement(); err != nil {
+			return err
+		}
+	}
+
 	log.Printf("Oracle writer task initialized, table: %s, batchSize: %d", task.table, task.batchSize)
 
 	return nil
@@ -306,6 +359,67 @@ func (task *OracleWriterTask) prepareInsertStatement() error {
 	return nil
 }
 
+// buildUpdateStatement 生成按指定键列更新的 SQL，并返回参数在记录中的顺序。
+func buildUpdateStatement(table string, columns, keys []string) (string, []int, error) {
+	keySet := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		keySet[strings.ToLower(key)] = true
+	}
+
+	var setParts []string
+	var whereParts []string
+	var argsOrder []int
+
+	for index, column := range columns {
+		if keySet[strings.ToLower(column)] {
+			continue
+		}
+		setParts = append(setParts, fmt.Sprintf("%s = :col%d", column, index+1))
+		argsOrder = append(argsOrder, index)
+	}
+
+	for _, key := range keys {
+		index := -1
+		for i, column := range columns {
+			if strings.EqualFold(column, key) {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return "", nil, fmt.Errorf("update key %s is not in the column list", key)
+		}
+		whereParts = append(whereParts, fmt.Sprintf("%s = :col%d", columns[index], index+1))
+		argsOrder = append(argsOrder, index)
+	}
+
+	if len(setParts) == 0 {
+		return "", nil, fmt.Errorf("update mode requires at least one non-key column")
+	}
+
+	statement := fmt.Sprintf("UPDATE %s SET %s WHERE %s",
+		table,
+		strings.Join(setParts, ", "),
+		strings.Join(whereParts, " AND "),
+	)
+	return statement, argsOrder, nil
+}
+
+func (task *OracleWriterTask) prepareUpdateStatement() error {
+	statement, argsOrder, err := buildUpdateStatement(task.table, task.columns, task.writerJob.updateKeys)
+	if err != nil {
+		return err
+	}
+
+	task.updateStmt, err = task.db.Prepare(statement)
+	if err != nil {
+		return fmt.Errorf("failed to prepare update statement: %v", err)
+	}
+	task.updateArgs = argsOrder
+	log.Printf("Oracle update statement prepared: %s", statement)
+	return nil
+}
+
 func (task *OracleWriterTask) getTableColumns() ([]string, error) {
 	query := `
 		SELECT column_name
@@ -340,6 +454,9 @@ func (task *OracleWriterTask) StartWrite(recordReceiver plugin.RecordReceiver) e
 	defer func() {
 		if task.insertStmt != nil {
 			task.insertStmt.Close()
+		}
+		if task.updateStmt != nil {
+			task.updateStmt.Close()
 		}
 		if task.db != nil {
 			task.db.Close()
@@ -398,12 +515,38 @@ func (task *OracleWriterTask) writeBatch(batch []element.Record) error {
 	stmt := tx.Stmt(task.insertStmt)
 	defer stmt.Close()
 
+	var updateStmt *sql.Stmt
+	if task.updateStmt != nil {
+		updateStmt = tx.Stmt(task.updateStmt)
+		defer updateStmt.Close()
+	}
+
 	for _, record := range batch {
 		// 转换记录数据
 		values := make([]interface{}, len(task.columns))
 		for i := 0; i < len(task.columns) && i < record.GetColumnNumber(); i++ {
 			column := record.GetColumn(i)
 			values[i] = task.convertValue(column)
+		}
+
+		// update 模式：先按键列更新，未命中再插入
+		if updateStmt != nil {
+			args := make([]interface{}, len(task.updateArgs))
+			for i, index := range task.updateArgs {
+				args[i] = values[index]
+			}
+			result, err := updateStmt.Exec(args...)
+			if err != nil {
+				log.Printf("Failed to execute update statement, table: %s, error: %v", task.table, err)
+				return fmt.Errorf("failed to execute update: %v", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("failed to read update result: %v", err)
+			}
+			if affected > 0 {
+				continue
+			}
 		}
 
 		// 执行插入
