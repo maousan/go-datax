@@ -5,12 +5,12 @@ import (
 	"log"
 	"strings"
 
+	"github.com/glebarez/sqlite"
 	"github.com/longkeyy/go-datax/common/config"
 	"github.com/longkeyy/go-datax/common/element"
 	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/factory"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )

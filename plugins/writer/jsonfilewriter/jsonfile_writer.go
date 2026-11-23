@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -451,18 +452,31 @@ func (task *JSONFileWriterTask) convertColumnValue(column element.Column, column
 		if longVal, err := column.GetAsLong(); err == nil {
 			return longVal
 		}
+		// 源列为字符串时尝试解析，避免静默写成0
+		if longVal, err := strconv.ParseInt(strings.TrimSpace(column.GetAsString()), 10, 64); err == nil {
+			return longVal
+		}
+		log.Printf("Warning: cannot convert column value to long, writing 0: value=%q", column.GetAsString())
 		return int64(0)
 
 	case "double":
 		if doubleVal, err := column.GetAsDouble(); err == nil {
 			return doubleVal
 		}
+		if doubleVal, err := strconv.ParseFloat(strings.TrimSpace(column.GetAsString()), 64); err == nil {
+			return doubleVal
+		}
+		log.Printf("Warning: cannot convert column value to double, writing 0: value=%q", column.GetAsString())
 		return float64(0)
 
 	case "boolean":
 		if boolVal, err := column.GetAsBool(); err == nil {
 			return boolVal
 		}
+		if boolVal, err := strconv.ParseBool(strings.TrimSpace(column.GetAsString())); err == nil {
+			return boolVal
+		}
+		log.Printf("Warning: cannot convert column value to bool, writing false: value=%q", column.GetAsString())
 		return false
 
 	case "date":

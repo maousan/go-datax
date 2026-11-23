@@ -32,6 +32,29 @@ func (e *Engine) Start(allConf config.Configuration) error {
 }
 
 func Main(ver string) {
+	var jobPath string
+	var showVersion bool
+
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.StringVar(&jobPath, "job", "", "Job configuration file path")
+	flag.BoolVar(&showVersion, "version", false, "Show version information")
+	flag.Usage = func() {
+		fmt.Println("Usage: datax [options]")
+		fmt.Println("Options:")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("DataX Go version %s\n", ver)
+		return
+	}
+
+	if jobPath == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	// Setup structured logging with zap
 	logConfig := &logger.LoggerConfig{
 		Level:       logger.LevelInfo,
@@ -48,15 +71,6 @@ func Main(ver string) {
 	appLogger := logger.App()
 	appLogger.Info("DataX Go starting",
 		zap.String("version", ver))
-
-	var jobPath string
-	flag.StringVar(&jobPath, "job", "", "Job configuration file path")
-	flag.Parse()
-
-	if jobPath == "" {
-		fmt.Println("Usage: datax -job <config-file>")
-		os.Exit(1)
-	}
 
 	appLogger.Info("Starting DataX execution", zap.String("jobPath", jobPath))
 

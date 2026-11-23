@@ -2,14 +2,17 @@ package jsonfilereader
 
 import (
 	"bufio"
+	"bytes"
 	"compress/bzip2"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +31,113 @@ const (
 	FormatJSONL JSONFormat = "jsonl" // JSON Lines格式，每行一个JSON对象
 	FormatAuto  JSONFormat = "auto"  // 自动检测格式
 )
+
+// orderedObject 保存JSON对象的字段顺序
+// 标准库反序列化到map会丢失键顺序，通配符模式（column: ["*"]）依赖字段顺序，
+// 因此使用解码器逐个token读取对象，保留原始字段顺序。
+type orderedObject struct {
+	keys   []string
+	values map[string]interface{}
+}
+
+// MarshalJSON 按原始字段顺序序列化，供嵌套对象降级为字符串时使用
+func (o *orderedObject) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		valueBytes, err := json.Marshal(o.values[key])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		buf.Write(valueBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// parseOrderedJSON 解析单个JSON值，对象保留字段顺序
+func parseOrderedJSON(data []byte) (interface{}, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	value, err := decodeOrderedValue(dec)
+	if err != nil {
+		return nil, err
+	}
+	// 确保没有多余内容
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("unexpected data after JSON value")
+		}
+		return nil, err
+	}
+	return value, nil
+}
+
+// decodeOrderedValue 从解码器读取一个JSON值，对象以orderedObject返回
+func decodeOrderedValue(dec *json.Decoder) (interface{}, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		// 标量（string/float64/bool/nil）与标准库Unmarshal行为一致
+		return tok, nil
+	}
+
+	switch delim {
+	case '{':
+		obj := &orderedObject{values: make(map[string]interface{})}
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid JSON object key: %v", keyTok)
+			}
+			value, err := decodeOrderedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := obj.values[key]; !exists {
+				obj.keys = append(obj.keys, key)
+			}
+			obj.values[key] = value
+		}
+		if _, err := dec.Token(); err != nil { // 消费 '}'
+			return nil, err
+		}
+		return obj, nil
+
+	case '[':
+		var arr []interface{}
+		for dec.More() {
+			value, err := decodeOrderedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			arr = append(arr, value)
+		}
+		if _, err := dec.Token(); err != nil { // 消费 ']'
+			return nil, err
+		}
+		return arr, nil
+
+	default:
+		return nil, fmt.Errorf("unexpected JSON delimiter: %v", delim)
+	}
+}
 
 // JSONFileReaderJob JSON文件读取作业
 type JSONFileReaderJob struct {
@@ -439,9 +549,16 @@ func (job *JSONFileReaderJob) inferSchema() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("no fields found during schema inference")
 	}
 
-	// 将统计信息转换为列配置
+	// 将统计信息转换为列配置（按字段名排序，避免map遍历顺序随机导致列顺序不稳定）
+	fieldNames := make([]string, 0, len(fieldStats))
+	for fieldName := range fieldStats {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Strings(fieldNames)
+
 	columns := make([]map[string]interface{}, 0, len(fieldStats))
-	for fieldName, fieldInfo := range fieldStats {
+	for _, fieldName := range fieldNames {
+		fieldInfo := fieldStats[fieldName]
 		inferredType := job.inferFieldType(fieldInfo)
 		column := map[string]interface{}{
 			"name": fieldName,
@@ -918,10 +1035,14 @@ func (task *JSONFileReaderTask) readJSONFile(reader io.Reader, recordSender plug
 		return 0, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	// 解析JSON数组
-	var jsonArray []interface{}
-	if err := json.Unmarshal(data, &jsonArray); err != nil {
+	// 解析JSON数组（保留对象字段顺序）
+	parsed, err := parseOrderedJSON(data)
+	if err != nil {
 		return 0, fmt.Errorf("failed to parse JSON array: %v", err)
+	}
+	jsonArray, ok := parsed.([]interface{})
+	if !ok {
+		return 0, fmt.Errorf("failed to parse JSON array: expected array, got %T", parsed)
 	}
 
 	recordCount := int64(0)
@@ -960,9 +1081,9 @@ func (task *JSONFileReaderTask) readJSONLFile(reader io.Reader, recordSender plu
 			continue
 		}
 
-		// 解析JSON对象
-		var jsonObj interface{}
-		if err := json.Unmarshal([]byte(line), &jsonObj); err != nil {
+		// 解析JSON对象（保留字段顺序）
+		jsonObj, err := parseOrderedJSON([]byte(line))
+		if err != nil {
 			return recordCount, fmt.Errorf("failed to parse JSON at line %d: %v", lineNumber, err)
 		}
 
@@ -990,14 +1111,34 @@ func (task *JSONFileReaderTask) readJSONLFile(reader io.Reader, recordSender plu
 	return recordCount, nil
 }
 
+// inferJSONColumnType 根据JSON值推断列类型
+func inferJSONColumnType(value interface{}) string {
+	switch v := value.(type) {
+	case bool:
+		return "boolean"
+	case float64:
+		if v == math.Trunc(v) && !math.IsInf(v, 0) && !math.IsNaN(v) &&
+			v >= math.MinInt64 && v <= math.MaxInt64 {
+			return "long"
+		}
+		return "double"
+	default:
+		return "string"
+	}
+}
+
 func (task *JSONFileReaderTask) convertJSONToRecord(jsonObj interface{}) (element.Record, error) {
 	record := task.factory.GetRecordFactory().CreateRecord()
 
-	// 将JSON对象转换为map
+	// 将JSON对象转换为map，并保留字段顺序
 	var objMap map[string]interface{}
+	var orderedKeys []string
 	switch v := jsonObj.(type) {
 	case map[string]interface{}:
 		objMap = v
+	case *orderedObject:
+		objMap = v.values
+		orderedKeys = v.keys
 	default:
 		// 如果不是对象，尝试序列化再反序列化
 		jsonBytes, err := json.Marshal(jsonObj)
@@ -1014,9 +1155,20 @@ func (task *JSONFileReaderTask) convertJSONToRecord(jsonObj interface{}) (elemen
 	// 处理通配符模式
 	if len(task.readerJob.columns) == 1 {
 		if _, isWildcard := task.readerJob.columns[0]["wildcard"]; isWildcard {
-			// 通配符模式：按JSON对象的键值对顺序添加所有字段
-			for _, value := range objMap {
-				column := task.convertJSONValue(value, "string", "")
+			// 通配符模式：按JSON对象的字段顺序添加所有字段
+			keys := orderedKeys
+			if keys == nil {
+				// 没有记录顺序（如非对象来源）时按字段名排序，保证结果稳定
+				keys = make([]string, 0, len(objMap))
+				for key := range objMap {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+			}
+			for _, key := range keys {
+				// 通配符模式按JSON原始类型生成列，避免数值被强转为字符串后丢失精度/类型
+				value := objMap[key]
+				column := task.convertJSONValue(value, inferJSONColumnType(value), "")
 				record.AddColumn(column)
 			}
 			return record, nil
@@ -1070,13 +1222,20 @@ func (task *JSONFileReaderTask) getNestedValue(jsonObj map[string]interface{}, f
 	var current interface{} = jsonObj
 
 	for _, part := range parts {
-		if currentMap, ok := current.(map[string]interface{}); ok {
+		switch currentMap := current.(type) {
+		case map[string]interface{}:
 			if value, exists := currentMap[part]; exists {
 				current = value
 			} else {
 				return nil // 字段不存在
 			}
-		} else {
+		case *orderedObject:
+			if value, exists := currentMap.values[part]; exists {
+				current = value
+			} else {
+				return nil // 字段不存在
+			}
+		default:
 			return nil // 不是对象，无法继续访问
 		}
 	}
@@ -1167,6 +1326,13 @@ func (task *JSONFileReaderTask) convertJSONValue(value interface{}, columnType, 
 		return columnFactory.CreateStringColumn(valueStr)
 
 	default: // string
+		// 嵌套对象/数组序列化为JSON字符串，而不是Go默认格式
+		switch value.(type) {
+		case *orderedObject, map[string]interface{}, []interface{}:
+			if jsonBytes, err := json.Marshal(value); err == nil {
+				return columnFactory.CreateStringColumn(string(jsonBytes))
+			}
+		}
 		return columnFactory.CreateStringColumn(fmt.Sprintf("%v", value))
 	}
 }
