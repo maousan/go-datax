@@ -73,14 +73,14 @@ export default function NavBar() {
         </div>
       </div>
       <ul className={styles.right}>
-        <li>
+        <li className={styles['nav-search']}>
           <Input.Search
             className={styles.round}
             placeholder="输入内容查询"
             onPressEnter={(event) => handleSearch((event.target as HTMLInputElement).value)}
           />
         </li>
-        <li>
+        <li className={styles['nav-optional']}>
           <Tooltip content="当前仅支持中文">
             <IconButton
               icon={<IconLanguage />}
@@ -104,7 +104,7 @@ export default function NavBar() {
             />
           </Tooltip>
         </li>
-        <li>
+        <li className={styles['nav-optional']}>
           <Tooltip content="设置">
             <IconButton
               icon={<IconSettings />}
@@ -112,7 +112,7 @@ export default function NavBar() {
             />
           </Tooltip>
         </li>
-        <li>
+        <li className={styles['nav-optional']}>
           <Tooltip content="帮助">
             <IconButton
               icon={<IconQuestionCircle />}
@@ -124,7 +124,7 @@ export default function NavBar() {
         </li>
         <li>
           <Space size={8}>
-            <Typography.Text>{username}</Typography.Text>
+            <Typography.Text className={styles['nav-username']}>{username}</Typography.Text>
             <Dropdown droplist={droplist} position="br">
               <Avatar
                 size={32}
