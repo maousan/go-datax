@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/longkeyy/go-datax/internal/execution"
 	"github.com/longkeyy/go-datax/internal/store"
 )
 
@@ -41,6 +42,12 @@ func newTestServer(t *testing.T, assets map[string]string, auth AuthConfig) (*Se
 func newTestServerWithStore(t *testing.T, assets map[string]string, auth AuthConfig, dataStore *store.Store) (*Server, http.Handler) {
 	t.Helper()
 
+	return newTestServerWithExecutor(t, assets, auth, dataStore, nil)
+}
+
+func newTestServerWithExecutor(t *testing.T, assets map[string]string, auth AuthConfig, dataStore *store.Store, executor *execution.Manager) (*Server, http.Handler) {
+	t.Helper()
+
 	fsys := fstest.MapFS{}
 	for name, content := range assets {
 		fsys[name] = &fstest.MapFile{Data: []byte(content)}
@@ -49,7 +56,7 @@ func newTestServerWithStore(t *testing.T, assets map[string]string, auth AuthCon
 	cfg := DefaultConfig("")
 	cfg.Auth = auth
 
-	srv, err := New(cfg, "test-version", fsys, dataStore)
+	srv, err := New(cfg, "test-version", fsys, dataStore, executor)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}

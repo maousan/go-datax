@@ -5,6 +5,7 @@ import DataSourcesPage from './pages/DataSourcesPage'
 import LoginPage from './pages/LoginPage'
 import OverviewPage from './pages/OverviewPage'
 import RunsPage from './pages/RunsPage'
+import RunDetailPage from './pages/RunDetailPage'
 import SyncJobsPage from './pages/SyncJobsPage'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="data-sources" element={<DataSourcesPage />} />
         <Route path="sync-jobs" element={<SyncJobsPage />} />
         <Route path="runs" element={<RunsPage />} />
+        <Route path="runs/:id" element={<RunDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

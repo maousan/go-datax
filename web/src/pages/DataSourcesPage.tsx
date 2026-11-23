@@ -69,6 +69,7 @@ export default function DataSourcesPage() {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
   const [pageTestResult, setPageTestResult] = useState<ConnectionTestResult | null>(null)
+  const [pageError, setPageError] = useState('')
 
   const [form] = Form.useForm<DataSourceInput>()
   const selectedType = Form.useWatch('type', form) ?? 'mysql'
@@ -207,7 +208,14 @@ export default function DataSourcesPage() {
             title="确认删除该数据源？"
             okText="确定"
             cancelText="取消"
-            onConfirm={() => deleteMutation.mutate(item.id)}
+            onConfirm={async () => {
+              setPageError('')
+              try {
+                await deleteMutation.mutateAsync(item.id)
+              } catch (err) {
+                setPageError(err instanceof ApiError ? err.message : '删除失败，请稍后重试')
+              }
+            }}
           >
             <Button type="link" danger>
               删除
@@ -238,6 +246,17 @@ export default function DataSourcesPage() {
 
       {listQuery.isError ? (
         <Alert type="error" message="读取数据源失败，请稍后重试" showIcon style={{ marginBottom: 16 }} />
+      ) : null}
+
+      {pageError ? (
+        <Alert
+          closable
+          showIcon
+          type="error"
+          message={pageError}
+          style={{ marginBottom: 16 }}
+          onClose={() => setPageError('')}
+        />
       ) : null}
 
       {pageTestResult ? (

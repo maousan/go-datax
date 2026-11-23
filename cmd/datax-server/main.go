@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,10 +11,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/longkeyy/go-datax/internal/execution"
 	"github.com/longkeyy/go-datax/internal/server"
 	"github.com/longkeyy/go-datax/internal/store"
 	webassets "github.com/longkeyy/go-datax/web"
@@ -77,12 +81,38 @@ func main() {
 	}
 	defer dataStore.Close()
 
+	if failed, err := dataStore.MarkRunningRunsFailed("服务重启导致运行中断"); err != nil {
+		log.Printf("恢复残留运行状态失败: %v", err)
+	} else if failed > 0 {
+		log.Printf("已将 %d 条残留运行标记为失败", failed)
+	}
+
+	dataxBin, dataxVersion, err := resolveDataXBin(cfg)
+	if err != nil {
+		log.Fatalf("初始化执行器失败: %v", err)
+	}
+
+	manager, err := execution.New(execution.Config{
+		DataXBin:      dataxBin,
+		DataXVersion:  dataxVersion,
+		LogsDir:       cfg.LogsDir(),
+		SnapshotsDir:  cfg.SnapshotsDir(),
+		MaxConcurrent: 2,
+		MaxRuns:       cfg.Retention.MaxRuns,
+		MaxAgeDays:    cfg.Retention.MaxAgeDays,
+		MaxLogBytes:   cfg.Retention.MaxLogBytes,
+	}, dataStore)
+	if err != nil {
+		log.Fatalf("初始化执行器失败: %v", err)
+	}
+	manager.Prune()
+
 	assets, err := fs.Sub(webassets.Dist, "dist")
 	if err != nil {
 		log.Fatalf("加载内嵌前端资源失败: %v", err)
 	}
 
-	srv, err := server.New(cfg, Version, assets, dataStore)
+	srv, err := server.New(cfg, Version, assets, dataStore, manager)
 	if err != nil {
 		log.Fatalf("初始化服务失败: %v", err)
 	}
@@ -98,6 +128,7 @@ func main() {
 	}
 
 	log.Printf("datax-server %s 监听 http://%s（数据目录：%s）", Version, cfg.Listen, cfg.DataDir)
+	log.Printf("datax 执行器: %s（%s）", dataxBin, dataxVersion)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("服务启动失败: %v", err)
 	}
@@ -113,6 +144,45 @@ func resolveDataDir(flagValue string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "go-datax-admin"), nil
+}
+
+func resolveDataXBin(cfg server.Config) (string, string, error) {
+	var candidates []string
+	if cfg.DataX.Bin != "" {
+		candidates = append(candidates, cfg.DataX.Bin)
+	}
+	if executable, err := os.Executable(); err == nil {
+		name := "datax"
+		if runtime.GOOS == "windows" {
+			name = "datax.exe"
+		}
+		candidates = append(candidates, filepath.Join(filepath.Dir(executable), name))
+	}
+	candidates = append(candidates, "datax")
+
+	for _, candidate := range candidates {
+		path := candidate
+		if !strings.ContainsAny(candidate, `/\`) {
+			found, err := exec.LookPath(candidate)
+			if err != nil {
+				continue
+			}
+			path = found
+		}
+		if info, err := os.Stat(path); err != nil || info.IsDir() {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		output, err := exec.CommandContext(ctx, path, "-version").CombinedOutput()
+		cancel()
+		if err != nil {
+			return "", "", fmt.Errorf("datax 可执行文件不可用（%s）: %v", path, err)
+		}
+		return path, strings.TrimSpace(string(output)), nil
+	}
+
+	return "", "", fmt.Errorf("找不到 datax 可执行文件，请通过 datax.bin 配置或放到 datax-server 同目录")
 }
 
 // runHashPassword 从标准输入读取明文并输出 bcrypt 哈希。

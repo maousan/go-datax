@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T, path string) *Store {
@@ -115,6 +116,46 @@ func TestDataSourceSearchAndDuplicateName(t *testing.T) {
 	})
 	if !errors.Is(err, ErrDuplicateDataSourceName) {
 		t.Errorf("duplicate create = %v, want ErrDuplicateDataSourceName", err)
+	}
+}
+
+func TestListRunsForPrune(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "admin.db"))
+	now := time.Now()
+
+	for i := 0; i < 5; i++ {
+		run := &JobRun{
+			Status:    RunStatusSucceeded,
+			Trigger:   RunTriggerManual,
+			StartedAt: now.Add(-time.Duration(i) * time.Hour),
+		}
+		if err := s.CreateJobRun(run); err != nil {
+			t.Fatalf("CreateJobRun() failed: %v", err)
+		}
+	}
+
+	overflow, err := s.ListRunsForPrune(2, 0)
+	if err != nil {
+		t.Fatalf("ListRunsForPrune() failed: %v", err)
+	}
+	if len(overflow) != 3 {
+		t.Errorf("overflow count = %d, want 3", len(overflow))
+	}
+
+	if err := s.CreateJobRun(&JobRun{
+		Status:    RunStatusSucceeded,
+		Trigger:   RunTriggerManual,
+		StartedAt: now.Add(-48 * time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateJobRun() failed: %v", err)
+	}
+
+	expired, err := s.ListRunsForPrune(0, 1)
+	if err != nil {
+		t.Fatalf("ListRunsForPrune() failed: %v", err)
+	}
+	if len(expired) != 1 {
+		t.Errorf("expired count = %d, want 1", len(expired))
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/longkeyy/go-datax/internal/execution"
 	"github.com/longkeyy/go-datax/internal/store"
 )
 
@@ -15,16 +16,18 @@ const bearerPrefix = "Bearer "
 
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
-	auth        AuthConfig
-	version     string
-	assets      fs.FS
-	tokens      *TokenService
-	dataStore *store.Store
-	handler     http.Handler
+	auth         AuthConfig
+	version      string
+	assets       fs.FS
+	tokens       *TokenService
+	dataStore    *store.Store
+	executor     *execution.Manager
+	dataxVersion string
+	handler      http.Handler
 }
 
 // New 创建一个管理台服务。assets 是前端构建产物的根文件系统（index.html 位于根）。
-func New(cfg Config, version string, assets fs.FS, dataStore *store.Store) (*Server, error) {
+func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, executors ...*execution.Manager) (*Server, error) {
 	if assets == nil {
 		return nil, fmt.Errorf("assets filesystem is required")
 	}
@@ -38,12 +41,19 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store) (*Ser
 	}
 
 	s := &Server{
-		auth:        cfg.Auth,
-		version:     version,
-		assets:      assets,
-		tokens:      tokens,
+		auth:      cfg.Auth,
+		version:   version,
+		assets:    assets,
+		tokens:    tokens,
 		dataStore: dataStore,
 	}
+	for _, executor := range executors {
+		if executor != nil {
+			s.executor = executor
+			s.dataxVersion = executor.DataXVersion()
+		}
+	}
+
 	s.handler = s.routes()
 	return s, nil
 }
@@ -71,6 +81,25 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("PUT /api/v1/data-sources/{id}", s.handleUpdateDataSource)
 	protected.HandleFunc("DELETE /api/v1/data-sources/{id}", s.handleDeleteDataSource)
 
+	protected.HandleFunc("GET /api/v1/sync-jobs", s.handleListSyncJobs)
+	protected.HandleFunc("POST /api/v1/sync-jobs", s.handleCreateSyncJob)
+	protected.HandleFunc("POST /api/v1/sync-jobs/import", s.handleImportSyncJob)
+	protected.HandleFunc("GET /api/v1/sync-jobs/{id}", s.handleGetSyncJob)
+	protected.HandleFunc("PUT /api/v1/sync-jobs/{id}", s.handleUpdateSyncJob)
+	protected.HandleFunc("DELETE /api/v1/sync-jobs/{id}", s.handleDeleteSyncJob)
+	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/duplicate", s.handleDuplicateSyncJob)
+	protected.HandleFunc("GET /api/v1/sync-jobs/{id}/export", s.handleExportSyncJob)
+	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/runs", s.handleStartRun)
+
+	protected.HandleFunc("GET /api/v1/runs", s.handleListRuns)
+	protected.HandleFunc("GET /api/v1/runs/{id}", s.handleGetRun)
+	protected.HandleFunc("POST /api/v1/runs/{id}/cancel", s.handleCancelRun)
+	protected.HandleFunc("GET /api/v1/runs/{id}/logs/stream", s.handleRunLogStream)
+	protected.HandleFunc("GET /api/v1/runs/{id}/log", s.handleRunLogDownload)
+	protected.HandleFunc("GET /api/v1/runs/{id}/snapshot", s.handleRunSnapshot)
+
+	protected.HandleFunc("GET /api/v1/overview", s.handleOverview)
+
 	protected.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
@@ -86,8 +115,9 @@ func (s *Server) routes() http.Handler {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"version": s.version,
+		"status":       "ok",
+		"version":      s.version,
+		"dataxVersion": s.dataxVersion,
 	})
 }
 

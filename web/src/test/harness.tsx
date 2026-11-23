@@ -42,6 +42,21 @@ export const server = setupServer(
     }
     return HttpResponse.json({ username: 'admin', expiresAt: '2030-01-01T00:00:00Z' })
   }),
+  http.get(`${ORIGIN}/api/v1/overview`, () =>
+    HttpResponse.json({
+      dataSourceCount: 0,
+      syncJobCount: 0,
+      windowHours: 24,
+      totalRuns: 0,
+      successRate: 0,
+      recentRuns: [],
+    }),
+  ),
+  http.get(`${ORIGIN}/api/v1/runs`, () =>
+    HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 20 }),
+  ),
+  http.get(`${ORIGIN}/api/v1/sync-jobs`, () => HttpResponse.json([])),
+  http.get(`${ORIGIN}/api/v1/data-sources`, () => HttpResponse.json([])),
 )
 
 export function setupTestServer() {

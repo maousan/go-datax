@@ -160,6 +160,17 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	names, err := s.jobNamesReferencingDataSource(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查数据源引用失败")
+		return
+	}
+	if len(names) > 0 {
+		writeError(w, http.StatusConflict, "data_source_in_use",
+			"该数据源被以下同步任务引用："+strings.Join(names, "、"))
+		return
+	}
+
 	if err := s.dataStore.DeleteDataSource(id); err != nil {
 		if errors.Is(err, store.ErrDataSourceNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "数据源不存在")

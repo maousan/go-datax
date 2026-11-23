@@ -4,15 +4,15 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 新建任务时可选择 raw 模式并粘贴完整 DataX JSON
-- [ ] 编辑器对 JSON 语法错误实时提示，并支持一键格式化
-- [ ] 保存前校验结构：缺少 `job`、`content`、reader/writer 的 name 或 parameter 时拒绝并指出问题
-- [ ] 校验失败时不创建任务
-- [ ] 导入现有 DataX JSON 文件内容即可创建 raw 任务
-- [ ] raw 任务可以编辑并保存新的 JSON
-- [ ] 任务创建后编写模式固定，编辑页不提供切换
-- [ ] raw 任务导出与原内容语义一致
-- [ ] 列表与详情正确标识 raw 模式
-- [ ] API 层测试覆盖 raw 创建、结构校验失败、导入与导出
+- [x] 新建任务时可选择 raw 模式并粘贴完整 DataX JSON
+- [x] 编辑器对 JSON 语法错误实时提示，并支持一键格式化
+- [x] 保存前校验结构：缺少 `job`、`content`、reader/writer 的 name 或 parameter 时拒绝并指出问题
+- [x] 校验失败时不创建任务
+- [x] 导入现有 DataX JSON 文件内容即可创建 raw 任务
+- [x] raw 任务可以编辑并保存新的 JSON
+- [x] 任务创建后编写模式固定，编辑页不提供切换
+- [x] raw 任务导出与原内容语义一致
+- [x] 列表与详情正确标识 raw 模式
+- [x] API 层测试覆盖 raw 创建、结构校验失败、导入与导出

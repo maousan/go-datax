@@ -102,6 +102,15 @@ func (s *Store) GetDataSource(id int64) (DataSource, error) {
 	return ds, nil
 }
 
+// CountDataSources 返回数据源总数。
+func (s *Store) CountDataSources() (int64, error) {
+	var count int64
+	if err := s.db.Model(&DataSource{}).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // CreateDataSource 创建数据源，名称冲突时返回 ErrDuplicateDataSourceName。
 func (s *Store) CreateDataSource(ds *DataSource) error {
 	exists, err := s.dataSourceNameExists(ds.Name, 0)

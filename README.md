@@ -260,6 +260,51 @@ docker run --rm -v $(pwd)/config.json:/config.json ghcr.io/longkeyy/go-datax:lat
 - [插件开发](docs/PLUGIN_DEVELOPMENT.md) - 扩展插件开发指南
 - [插件文档](docs/plugins/) - 各插件详细配置说明
 
+## 🖥️ Web 管理台（datax-server）
+
+go-datax 附带一个单机 Web 管理台，用浏览器管理数据源与同步任务、运行任务并查看实时日志与历史。
+
+### 构建
+
+```bash
+# 一次构建前端 + datax + datax-server
+make build
+
+# 或手动执行
+pnpm --dir web install
+pnpm --dir web build
+go build -o dist/datax-server ./cmd/datax-server
+```
+
+### 启动
+
+```bash
+./dist/datax-server --data-dir ./data
+```
+
+首次启动会创建 `server.json`，生成随机管理账号、bcrypt 密码与 JWT 密钥，并在控制台**只打印一次**初始密码。默认监听 `http://127.0.0.1:8080`。
+
+- `datax` 二进制需要位于 `datax-server` 同目录或 `PATH` 中，也可在配置里用 `datax.bin` 指定
+- `--config` 指定配置文件，`--listen` 覆盖监听地址，`--data-dir` 指定数据目录
+- 生成 bcrypt 密码哈希：`echo '新密码' | datax-server hash-password`
+
+### 功能
+
+- **数据源**：MySQL / PostgreSQL / SQLite / SQL Server（含 jTDS URL），支持保存前与保存后的连接测试
+- **同步任务**：表单模式与原始 DataX JSON 模式、导入/导出、复制、编辑、删除
+- **运行**：启动、实时日志（SSE）、停止、运行历史、日志与快照下载
+- **概览**：数据源与任务数量、最近运行、成功率
+- **保留策略**：按条数/天数清理运行记录，单次日志超过上限自动截断
+
+### 认证与安全
+
+- 始终需要 JWT 登录；账号与密钥来自 `<data-dir>/server.json`
+- 数据源密码写入本地管理库，但所有 API 响应一律脱敏
+- 数据目录包含凭据与运行快照，建议仅在本机使用并保持目录权限
+- 旧版 SQL Server 若只支持 TLS 1.0，可在连接地址追加 `;encrypt=disable`
+
+更多设计与术语见 [GLOSSARY.md](GLOSSARY.md)、[架构决策](docs/adr/) 与 [管理台规格](.scratch/etl-admin/spec.md)。
+
 ## 🤝 贡献
 
 欢迎提交Issue和Pull Request来帮助改进项目。
