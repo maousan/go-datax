@@ -313,7 +313,7 @@ function StructurePane({
           data={columnsQuery.data ?? []}
           loading={columnsQuery.isLoading}
           pagination={false}
-          scroll={{ y: tableHeight }}
+          scroll={{ x: 700, y: tableHeight }}
           noDataElement={<Empty description="没有字段信息" />}
         />
       </div>
