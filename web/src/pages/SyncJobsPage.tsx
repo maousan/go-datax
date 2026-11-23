@@ -1,4 +1,4 @@
-import { ImportOutlined, PlusOutlined } from '@ant-design/icons'
+import { ImportOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import {
   Alert,
   Button,
@@ -14,6 +14,8 @@ import {
   Space,
   Table,
   Tag,
+  Typography,
+  Upload,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useState } from 'react'
@@ -84,6 +86,7 @@ export default function SyncJobsPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [importName, setImportName] = useState('')
   const [importText, setImportText] = useState('')
+  const [importFileName, setImportFileName] = useState('')
   const [importError, setImportError] = useState('')
 
   const [form] = Form.useForm<JobFormValues>()
@@ -558,16 +561,28 @@ export default function SyncJobsPage() {
             />
           </Form.Item>
           <Form.Item label="从文件读取">
-            <input
-              type="file"
-              accept=".json,application/json"
-              onChange={async (event) => {
-                const file = event.target.files?.[0]
-                if (file) {
-                  setImportText(await file.text())
-                }
-              }}
-            />
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Upload
+                accept=".json,application/json"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  file
+                    .text()
+                    .then((content) => {
+                      setImportText(content)
+                      setImportFileName(file.name)
+                      setImportError('')
+                    })
+                    .catch(() => setImportError('读取文件失败'))
+                  return false
+                }}
+              >
+                <Button icon={<UploadOutlined />}>选择 JSON 文件</Button>
+              </Upload>
+              {importFileName ? (
+                <Typography.Text type="secondary">已读取：{importFileName}</Typography.Text>
+              ) : null}
+            </Space>
           </Form.Item>
           <Form.Item label="DataX 配置">
             <JsonEditor value={importText} onChange={setImportText} height="300px" />
