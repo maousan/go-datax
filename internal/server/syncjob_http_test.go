@@ -233,6 +233,59 @@ func TestSyncJobRawImportAndExport(t *testing.T) {
 	}
 }
 
+func TestOracleFormJobExportUsesOraclePlugins(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources", token, map[string]any{
+		"name":     "oracle-db",
+		"type":     "oracle",
+		"jdbcUrl":  "jdbc:oracle:thin:@//db.example.com:1521/orcl",
+		"username": "app_user",
+		"password": "secret",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create datasource status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	created := decodeDataSource(t, rec)
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+		formJobBody("oracle-sync", created.ID, created.ID))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var job syncJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &job); err != nil {
+		t.Fatalf("job response is not JSON: %v", err)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var config map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &config); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	content := config["job"].(map[string]any)["content"].([]any)[0].(map[string]any)
+	reader := content["reader"].(map[string]any)
+	writer := content["writer"].(map[string]any)
+	if reader["name"] != "oraclereader" || writer["name"] != "oraclewriter" {
+		t.Errorf("plugins = %v -> %v, want oraclereader -> oraclewriter", reader["name"], writer["name"])
+	}
+
+	readerConnection := reader["parameter"].(map[string]any)["connection"].([]any)[0].(map[string]any)
+	writerConnection := writer["parameter"].(map[string]any)["connection"].([]any)[0].(map[string]any)
+	if _, ok := readerConnection["jdbcUrl"].(string); !ok {
+		t.Errorf("oracle reader jdbcUrl should be a string, got %T", readerConnection["jdbcUrl"])
+	}
+	if _, ok := writerConnection["jdbcUrl"].(string); !ok {
+		t.Errorf("oracle writer jdbcUrl should be a string, got %T", writerConnection["jdbcUrl"])
+	}
+}
+
 func TestDataSourceDeleteBlockedWhenReferenced(t *testing.T) {
 	handler := newTestHandler(t, map[string]string{
 		"index.html": "<html><body>app-shell</body></html>",

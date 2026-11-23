@@ -21,6 +21,7 @@ var supportedDataSourceTypes = map[string]bool{
 	"postgres": true,
 	"sqlite":   true,
 	"mssql":    true,
+	"oracle":   true,
 }
 
 type dataSourceRequest struct {
@@ -216,7 +217,7 @@ func validateDataSourceRequest(req dataSourceRequest) (dataSourceRequest, error)
 	}
 
 	if !supportedDataSourceTypes[req.Type] {
-		return req, fmt.Errorf("类型必须是 mysql、postgres、sqlite 或 mssql")
+		return req, fmt.Errorf("类型必须是 mysql、postgres、sqlite、mssql 或 oracle")
 	}
 	if req.JDBCUrl == "" {
 		return req, fmt.Errorf("连接地址不能为空")
@@ -260,6 +261,9 @@ func validJDBCURL(dsType, jdbcURL string) bool {
 	case "mssql":
 		return strings.HasPrefix(lower, "jdbc:sqlserver://") ||
 			strings.HasPrefix(lower, "jdbc:jtds:sqlserver://")
+	case "oracle":
+		return strings.HasPrefix(lower, "jdbc:oracle:thin:@") ||
+			strings.HasPrefix(lower, "oracle://")
 	default:
 		return false
 	}
@@ -293,6 +297,19 @@ func jdbcURLHasCredentials(dsType, jdbcURL string) bool {
 		}
 		hostPart := strings.SplitN(jdbcURL[len(prefix):], ";", 2)[0]
 		return strings.Contains(hostPart, "@")
+
+	case "oracle":
+		lower := strings.ToLower(jdbcURL)
+		var rest string
+		switch {
+		case strings.HasPrefix(lower, "jdbc:oracle:thin:@"):
+			rest = jdbcURL[len("jdbc:oracle:thin:@"):]
+		case strings.HasPrefix(lower, "oracle://"):
+			rest = jdbcURL[len("oracle://"):]
+		default:
+			return false
+		}
+		return strings.Contains(rest, "@")
 
 	default:
 		return false

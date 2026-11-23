@@ -290,7 +290,7 @@ go build -o dist/datax-server ./cmd/datax-server
 
 ### 功能
 
-- **数据源**：MySQL / PostgreSQL / SQLite / SQL Server（含 jTDS URL），支持保存前与保存后的连接测试
+- **数据源**：MySQL / PostgreSQL / SQLite / SQL Server（含 jTDS URL）/ Oracle，支持保存前与保存后的连接测试
 - **同步任务**：表单模式与原始 DataX JSON 模式、导入/导出、复制、编辑、删除
 - **运行**：启动、实时日志（SSE）、停止、运行历史、日志与快照下载
 - **概览**：数据源与任务数量、最近运行、成功率

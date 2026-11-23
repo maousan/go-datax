@@ -488,6 +488,7 @@ func TestDataSourceRejectsEmbeddedCredentials(t *testing.T) {
 		{"mysql", "mysql", "jdbc:mysql://root:secret@localhost:3306/app"},
 		{"postgres", "postgres", "jdbc:postgresql://root:secret@localhost:5432/app"},
 		{"mssql", "mssql", "jdbc:sqlserver://root:secret@localhost:1433;DatabaseName=app"},
+		{"oracle", "oracle", "jdbc:oracle:thin:@app:secret@localhost:1521/orcl"},
 	}
 
 	for _, tc := range cases {

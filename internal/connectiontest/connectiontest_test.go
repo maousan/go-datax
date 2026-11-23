@@ -163,6 +163,33 @@ func TestBuildPostgresDSNMapsKnownParams(t *testing.T) {
 	}
 }
 
+func TestBuildOracleDSNFromThinURL(t *testing.T) {
+	driver, dsn, err := buildDSN(Params{
+		Type:     "oracle",
+		JDBCUrl:  "jdbc:oracle:thin:@//db.example.com:1521/orcl",
+		Username: "app_user",
+		Password: "P@ss:w<>ord",
+	})
+	if err != nil {
+		t.Fatalf("buildDSN() failed: %v", err)
+	}
+	if driver != "oracle" {
+		t.Errorf("driver = %q, want oracle", driver)
+	}
+
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("DSN is not a URL: %v", err)
+	}
+	if parsed.Host != "db.example.com:1521" || parsed.Path != "/orcl" {
+		t.Errorf("unexpected DSN: %s", dsn)
+	}
+	password, _ := parsed.User.Password()
+	if password != "P@ss:w<>ord" {
+		t.Errorf("password = %q, want P@ss:w<>ord", password)
+	}
+}
+
 func TestBuildMSSQLDSNAcceptsJTDS(t *testing.T) {
 	driver, dsn, err := buildDSN(Params{
 		Type:     "mssql",

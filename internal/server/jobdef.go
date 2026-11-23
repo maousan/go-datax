@@ -13,6 +13,7 @@ var pluginsByDataSourceType = map[string][2]string{
 	"postgres": {"postgresqlreader", "postgresqlwriter"},
 	"sqlite":   {"sqlitereader", "sqlitewriter"},
 	"mssql":    {"sqlserverreader", "sqlserverwriter"},
+	"oracle":   {"oraclereader", "oraclewriter"},
 }
 
 type formEndpoint struct {
@@ -179,7 +180,7 @@ func materializeForm(def formJobDefinition, dataSources map[int64]store.DataSour
 		"password": readerSource.Password,
 		"connection": []map[string]any{
 			{
-				"jdbcUrl": []string{readerSource.JDBCUrl},
+				"jdbcUrl": readerJDBCURL(readerSource.Type, readerSource.JDBCUrl),
 				"table":   []string{def.Reader.Table},
 			},
 		},
@@ -234,9 +235,16 @@ func materializeForm(def formJobDefinition, dataSources map[int64]store.DataSour
 	}, nil
 }
 
+func readerJDBCURL(dataSourceType, jdbcURL string) any {
+	if dataSourceType == "oracle" {
+		return jdbcURL
+	}
+	return []string{jdbcURL}
+}
+
 func writerJDBCURL(dataSourceType, jdbcURL string) any {
 	switch dataSourceType {
-	case "postgres", "mssql":
+	case "postgres", "mssql", "oracle":
 		return jdbcURL
 	default:
 		return []string{jdbcURL}

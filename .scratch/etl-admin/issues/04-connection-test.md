@@ -1,6 +1,6 @@
 # 04: 连接测试
 
-**What to build:** AdminUser 可以在保存前测试正在编辑的 DataSource 连接，也可以在列表中测试已保存的 DataSource。支持 MySQL、PostgreSQL、SQLite 与 SQL Server（含 jTDS URL）；成功时显示往返延迟，失败时显示可理解的底层错误；测试本身不写入数据库。
+**What to build:** AdminUser 可以在保存前测试正在编辑的 DataSource 连接，也可以在列表中测试已保存的 DataSource。支持 MySQL、PostgreSQL、SQLite、SQL Server（含 jTDS URL）与 Oracle；成功时显示往返延迟，失败时显示可理解的底层错误；测试本身不写入数据库。
 
 **Blocked by:** 03
 
@@ -8,8 +8,9 @@
 
 - [x] 新建 DataSource 表单中可以直接测试当前输入，无需先保存
 - [x] 已保存的 DataSource 可以从列表触发测试
-- [x] MySQL、PostgreSQL、SQLite 与 SQL Server 都可以测试
+- [x] MySQL、PostgreSQL、SQLite、SQL Server 与 Oracle 都可以测试
 - [x] SQL Server 的 jTDS 与 Microsoft JDBC 两种 URL 都可以测试
+- [x] Oracle 使用 `SELECT 1 FROM DUAL` 探测，连接真实 Oracle 实例成功
 - [x] 用户名或密码包含 `@`、`:` 等特殊字符时不影响连接
 - [x] 测试成功时显示成功提示与耗时
 - [x] 测试失败时显示失败提示与底层错误摘要（例如认证失败、主机不可达）

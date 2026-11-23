@@ -11,6 +11,7 @@ import (
 	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/factory"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
+	"github.com/longkeyy/go-datax/internal/oracledsn"
 	_ "github.com/sijms/go-ora/v2"
 )
 
@@ -193,17 +194,10 @@ func (job *OracleWriterJob) Destroy() error {
 }
 
 func (job *OracleWriterJob) connect() (*sql.DB, error) {
-	// 解析Oracle连接字符串
-	// 支持格式: oracle://host:port/service_name
-	if !strings.HasPrefix(job.jdbcUrl, "oracle://") {
-		return nil, fmt.Errorf("invalid Oracle JDBC URL format: %s", job.jdbcUrl)
+	dsn, err := oracledsn.Build(job.jdbcUrl, job.username, job.password)
+	if err != nil {
+		return nil, err
 	}
-
-	urlPart := strings.TrimPrefix(job.jdbcUrl, "oracle://")
-
-	// 构建go-ora连接字符串
-	// 格式: oracle://user:password@host:port/service_name
-	dsn := fmt.Sprintf("oracle://%s:%s@%s", job.username, job.password, urlPart)
 
 	db, err := sql.Open("oracle", dsn)
 	if err != nil {

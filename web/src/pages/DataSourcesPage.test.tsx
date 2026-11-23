@@ -176,7 +176,7 @@ describe('data sources page', () => {
     expect(screen.getByRole('button', { name: /保\s*存/ })).toBeInTheDocument()
   })
 
-  it('offers SQL Server as a data source type', async () => {
+  it('offers SQL Server and Oracle as data source types', async () => {
     mockDataSourceApi([])
     renderApp('/data-sources')
     await screen.findByText('还没有数据源')
@@ -186,6 +186,7 @@ describe('data sources page', () => {
 
     await user.click(await screen.findByRole('combobox'))
     expect(await screen.findByText('SQL Server')).toBeInTheDocument()
+    expect(await screen.findByText('Oracle')).toBeInTheDocument()
   })
 
   it('tests an unsaved connection before saving', async () => {

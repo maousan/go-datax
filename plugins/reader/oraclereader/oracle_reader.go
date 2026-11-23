@@ -13,6 +13,7 @@ import (
 	"github.com/longkeyy/go-datax/common/logger"
 	"github.com/longkeyy/go-datax/common/database/rdbms/writer"
 	"github.com/longkeyy/go-datax/common/factory"
+	"github.com/longkeyy/go-datax/internal/oracledsn"
 	"go.uber.org/zap"
 
 	// 使用go-ora纯Go驱动，无需Oracle客户端库
@@ -251,19 +252,7 @@ func (job *OracleReaderJob) connect() (*sql.DB, error) {
 }
 
 func (job *OracleReaderJob) parseJdbcUrl() (string, error) {
-	// 支持多种Oracle连接字符串格式
-	// oracle://user:password@host:port/service
-	// oracle://user:password@host:port:sid
-	jdbcUrl := job.jdbcUrl
-
-	// 移除oracle://前缀
-	if strings.HasPrefix(jdbcUrl, "oracle://") {
-		jdbcUrl = strings.TrimPrefix(jdbcUrl, "oracle://")
-	}
-
-	// 构建go-ora连接字符串格式
-	// oracle://user:password@host:port/service_name
-	return fmt.Sprintf("oracle://%s:%s@%s", job.username, job.password, jdbcUrl), nil
+	return oracledsn.Build(job.jdbcUrl, job.username, job.password)
 }
 
 func (job *OracleReaderJob) Post() error {

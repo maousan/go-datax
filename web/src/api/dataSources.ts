@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPost, apiPut } from './client'
 
-export type DataSourceType = 'mysql' | 'postgres' | 'sqlite' | 'mssql'
+export type DataSourceType = 'mysql' | 'postgres' | 'sqlite' | 'mssql' | 'oracle'
 
 export interface DataSource {
   id: number

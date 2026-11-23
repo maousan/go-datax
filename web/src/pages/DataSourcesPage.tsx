@@ -31,6 +31,7 @@ const DATA_SOURCE_TYPES: Array<{ value: DataSourceType; label: string; placehold
   { value: 'postgres', label: 'PostgreSQL', placeholder: 'jdbc:postgresql://host:5432/db' },
   { value: 'sqlite', label: 'SQLite', placeholder: 'jdbc:sqlite:/path/to/database.db' },
   { value: 'mssql', label: 'SQL Server', placeholder: 'jdbc:sqlserver://host:1433;DatabaseName=db' },
+  { value: 'oracle', label: 'Oracle', placeholder: 'jdbc:oracle:thin:@//host:1521/service' },
 ]
 
 const TYPE_OPTIONS = DATA_SOURCE_TYPES.map(({ value, label }) => ({ value, label }))

@@ -13,7 +13,9 @@ import (
 	mysqldriver "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/sijms/go-ora/v2"
 
+	"github.com/longkeyy/go-datax/internal/oracledsn"
 	"github.com/longkeyy/go-datax/internal/sqlserverdsn"
 )
 
@@ -58,7 +60,11 @@ func Test(ctx context.Context, params Params) Result {
 	}
 
 	var one int
-	if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+	probe := "SELECT 1"
+	if driver == "oracle" {
+		probe = "SELECT 1 FROM DUAL"
+	}
+	if err := db.QueryRowContext(ctx, probe).Scan(&one); err != nil {
 		return Result{Message: err.Error()}
 	}
 
@@ -83,6 +89,12 @@ func buildDSN(params Params) (string, string, error) {
 			return "", "", err
 		}
 		return "sqlserver", dsn, nil
+	case "oracle":
+		dsn, err := oracledsn.Build(params.JDBCUrl, params.Username, params.Password)
+		if err != nil {
+			return "", "", err
+		}
+		return "oracle", dsn, nil
 	default:
 		return "", "", fmt.Errorf("暂不支持 %q 类型的连接测试", params.Type)
 	}
