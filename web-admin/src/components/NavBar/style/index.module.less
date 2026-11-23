@@ -1,0 +1,65 @@
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+  box-sizing: border-box;
+  background-color: var(--color-bg-2);
+  height: 100%;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  width: 220px;
+  padding-left: 20px;
+  box-sizing: border-box;
+}
+
+.logo-image {
+  width: 32px;
+  height: 32px;
+}
+
+.logo-name {
+  color: var(--color-text-1);
+  font-weight: 500;
+  font-size: 18px;
+  margin-left: 10px;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.right {
+  display: flex;
+  list-style: none;
+  padding-right: 20px;
+  margin: 0;
+
+  li {
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+.dropdown-icon {
+  margin-right: 8px;
+  font-size: 16px;
+  vertical-align: text-bottom;
+}
+
+.round {
+  width: 200px;
+
+  :global(.arco-input-inner-wrapper) {
+    border-radius: 16px;
+  }
+
+  svg {
+    font-size: 16px;
+  }
+}

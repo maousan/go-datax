@@ -20,7 +20,7 @@ import (
 	"github.com/longkeyy/go-datax/internal/execution"
 	"github.com/longkeyy/go-datax/internal/server"
 	"github.com/longkeyy/go-datax/internal/store"
-	webassets "github.com/longkeyy/go-datax/web"
+	webassets "github.com/longkeyy/go-datax/web-admin"
 )
 
 // Version 由构建时通过 ldflags 注入。

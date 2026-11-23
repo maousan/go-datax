@@ -12,7 +12,7 @@ VERSION := $(shell date +%Y%m%d%H%M%S)
 PROJECT_NAME := $(shell basename $(PWD))
 
 # Frontend directory
-WEB_DIR := web
+WEB_DIR := web-admin
 
 # Detect project structure and get all applications
 APPS := $(shell \
