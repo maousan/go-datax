@@ -69,8 +69,8 @@ func (job *OracleWriterJob) Init(config config.Configuration) error {
 
 	job.configuration = config
 
-	// 解析连接配置
-	connections := config.GetListConfiguration("connection")
+	// 解析连接配置（引擎传入的是 writer 配置，参数在 parameter 下）
+	connections := paramOrTopConfigList(config, "connection")
 	if len(connections) == 0 {
 		return fmt.Errorf("connection configuration is required")
 	}
@@ -89,36 +89,60 @@ func (job *OracleWriterJob) Init(config config.Configuration) error {
 	}
 
 	// 解析认证信息
-	job.username = config.GetString("username")
-	job.password = config.GetString("password")
+	job.username = paramOrTopString(config, "username")
+	job.password = paramOrTopString(config, "password")
 	if job.username == "" || job.password == "" {
 		return fmt.Errorf("username and password are required")
 	}
 
 	// 解析列配置
-	job.columns = config.GetStringList("column")
+	job.columns = paramOrTopStringList(config, "column")
 	if len(job.columns) == 0 {
 		return fmt.Errorf("column configuration is required")
 	}
 
 	// 解析写入模式
-	job.writeMode = strings.TrimSpace(config.GetStringWithDefault("writeMode", "INSERT"))
+	job.writeMode = strings.TrimSpace(config.GetStringWithDefault("parameter.writeMode",
+		config.GetStringWithDefault("writeMode", "INSERT")))
 	if err := job.parseWriteMode(job.writeMode); err != nil {
 		return err
 	}
 
 	// 解析SQL配置
-	job.preSql = config.GetStringList("preSql")
-	job.postSql = config.GetStringList("postSql")
-	job.session = config.GetStringList("session")
+	job.preSql = paramOrTopStringList(config, "preSql")
+	job.postSql = paramOrTopStringList(config, "postSql")
+	job.session = paramOrTopStringList(config, "session")
 
 	// 解析批次大小
-	job.batchSize = config.GetIntWithDefault("batchSize", DefaultBatchSize)
+	job.batchSize = config.GetIntWithDefault("parameter.batchSize",
+		config.GetIntWithDefault("batchSize", DefaultBatchSize))
 
 	log.Printf("Oracle writer job initialized, jdbcUrl: %s, tables: %v, columns: %v, writeMode: %s, updateKeys: %v, batchSize: %d",
 		job.jdbcUrl, job.tables, job.columns, job.writeMode, job.updateKeys, job.batchSize)
 
 	return nil
+}
+
+// paramOrTopString 优先读取 parameter.<key>，兼容直接传入参数配置的场景。
+func paramOrTopString(cfg config.Configuration, key string) string {
+	if value := cfg.GetString("parameter." + key); value != "" {
+		return value
+	}
+	return cfg.GetString(key)
+}
+
+func paramOrTopStringList(cfg config.Configuration, key string) []string {
+	if value := cfg.GetStringList("parameter." + key); len(value) > 0 {
+		return value
+	}
+	return cfg.GetStringList(key)
+}
+
+func paramOrTopConfigList(cfg config.Configuration, key string) []config.Configuration {
+	if value := cfg.GetListConfiguration("parameter." + key); len(value) > 0 {
+		return value
+	}
+	return cfg.GetListConfiguration(key)
 }
 
 // parseWriteMode 支持 INSERT、REPLACE 与 update(col1, col2)。
@@ -271,7 +295,7 @@ func (task *OracleWriterTask) Init(config config.Configuration) error {
 		return err
 	}
 
-	// 获取表信息
+	// 获取表信息：Split 会把当前任务的目标表写到顶层 connection
 	connections := config.GetListConfiguration("connection")
 	if len(connections) > 0 {
 		tables := connections[0].GetStringList("table")
@@ -279,10 +303,17 @@ func (task *OracleWriterTask) Init(config config.Configuration) error {
 			task.table = tables[0]
 		}
 	}
+	if task.table == "" && len(task.writerJob.tables) > 0 {
+		task.table = task.writerJob.tables[0]
+	}
+	if task.table == "" {
+		return fmt.Errorf("table configuration is required")
+	}
 
 	// 设置批次大小和超时时间
 	task.batchSize = task.writerJob.batchSize
-	task.insertTimeout = config.GetIntWithDefault("insertTimeout", DefaultInsertTimeout)
+	task.insertTimeout = config.GetIntWithDefault("parameter.insertTimeout",
+		config.GetIntWithDefault("insertTimeout", DefaultInsertTimeout))
 
 	// 建立数据库连接
 	var err error
@@ -565,7 +596,7 @@ func (task *OracleWriterTask) writeBatch(batch []element.Record) error {
 }
 
 func (task *OracleWriterTask) convertValue(column element.Column) interface{} {
-	if column == nil {
+	if column == nil || column.IsNull() {
 		return nil
 	}
 

@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/longkeyy/go-datax/common/config"
 	"github.com/longkeyy/go-datax/common/element"
@@ -72,6 +75,17 @@ func (job *SQLServerReaderJob) Init(config config.Configuration) error {
 	job.where = config.GetString("parameter.where")
 	job.splitPk = config.GetString("parameter.splitPk")
 	job.querySql = config.GetString("parameter.querySql")
+	if job.querySql == "" {
+		// 兼容部分平台把 querySql 放在 connection 里的配置
+		if values := conn.GetStringList("querySql"); len(values) > 0 {
+			job.querySql = values[0]
+			if len(values) > 1 {
+				log.Printf("Multiple querySql entries found, using the first one")
+			}
+		} else if value := conn.GetString("querySql"); value != "" {
+			job.querySql = value
+		}
+	}
 
 	// 获取fetchSize
 	if fetchSize := config.GetInt("parameter.fetchSize"); fetchSize > 0 {
@@ -373,7 +387,7 @@ func (task *SQLServerReaderTask) buildQuery() (string, error) {
 func (task *SQLServerReaderTask) convertToColumn(value interface{}) element.Column {
 	columnFactory := task.factory.GetColumnFactory()
 	if value == nil {
-		return columnFactory.CreateStringColumn("")
+		return columnFactory.CreateNullColumn(element.TypeString)
 	}
 
 	switch v := value.(type) {
@@ -390,6 +404,20 @@ func (task *SQLServerReaderTask) convertToColumn(value interface{}) element.Colu
 	case string:
 		return columnFactory.CreateStringColumn(v)
 	case []byte:
+		// go-mssqldb 把 DECIMAL/NUMERIC/MONEY 等以 []byte 返回，
+		// 这里按内容还原为数值或文本，避免下游把它当成二进制。
+		text := strings.TrimSpace(string(v))
+		if text != "" {
+			if intValue, err := strconv.ParseInt(text, 10, 64); err == nil {
+				return columnFactory.CreateLongColumn(intValue)
+			}
+			if floatValue, err := strconv.ParseFloat(text, 64); err == nil {
+				return columnFactory.CreateDoubleColumn(floatValue)
+			}
+			if utf8.Valid(v) && isPrintableText(text) {
+				return columnFactory.CreateStringColumn(text)
+			}
+		}
 		return columnFactory.CreateBytesColumn(v)
 	case time.Time:
 		return columnFactory.CreateDateColumn(v)
@@ -399,6 +427,18 @@ func (task *SQLServerReaderTask) convertToColumn(value interface{}) element.Colu
 		// 其他类型转换为字符串
 		return columnFactory.CreateStringColumn(fmt.Sprintf("%v", v))
 	}
+}
+
+func isPrintableText(value string) bool {
+	for _, char := range value {
+		if char == '\n' || char == '\r' || char == '\t' {
+			continue
+		}
+		if !unicode.IsPrint(char) {
+			return false
+		}
+	}
+	return true
 }
 
 func (task *SQLServerReaderTask) Post() error {
