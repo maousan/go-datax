@@ -15,6 +15,7 @@ import { useState } from 'react'
 import { useRuns, type Run, type RunFilters } from '../../api/runs'
 import { useSyncJobs } from '../../api/syncJobs'
 import RunStatusTag, { RunDetailLink } from '../../components/RunStatusTag'
+import useFillHeight from '../../hooks/useFillHeight'
 import listStyles from '../../style/list.module.less'
 import { formatDuration, formatTime } from '../../utils/format'
 
@@ -36,6 +37,7 @@ export default function RunsPage() {
   const [searchForm] = Form.useForm<RunSearchValues>()
   const runsQuery = useRuns(filters)
   const jobsQuery = useSyncJobs('')
+  const [tableRef, tableHeight] = useFillHeight(90)
 
   const jobOptions = (jobsQuery.data ?? []).map((job) => ({
     value: job.id,
@@ -93,7 +95,7 @@ export default function RunsPage() {
   ]
 
   return (
-    <Card>
+    <Card className={listStyles.page}>
       <Typography.Title heading={6}>运行历史</Typography.Title>
 
       <div className={listStyles['search-form-wrapper']}>
@@ -141,22 +143,25 @@ export default function RunsPage() {
         </div>
       </div>
 
-      <Table<Run>
-        rowKey="id"
-        tableLayoutFixed
-        columns={columns}
-        data={runsQuery.data?.items ?? []}
-        loading={runsQuery.isLoading}
-        pagination={{
-          current: runsQuery.data?.page ?? 1,
-          pageSize: runsQuery.data?.pageSize ?? 20,
-          total: runsQuery.data?.total ?? 0,
-          showTotal: true,
-          sizeCanChange: true,
-          onChange: (page, pageSize) => setFilters({ ...filters, page, pageSize }),
-        }}
-        noDataElement={<span>还没有运行记录</span>}
-      />
+      <div ref={tableRef} className={listStyles['table-fill']}>
+        <Table<Run>
+          rowKey="id"
+          tableLayoutFixed
+          columns={columns}
+          data={runsQuery.data?.items ?? []}
+          loading={runsQuery.isLoading}
+          scroll={{ y: tableHeight }}
+          pagination={{
+            current: runsQuery.data?.page ?? 1,
+            pageSize: runsQuery.data?.pageSize ?? 20,
+            total: runsQuery.data?.total ?? 0,
+            showTotal: true,
+            sizeCanChange: true,
+            onChange: (page, pageSize) => setFilters({ ...filters, page, pageSize }),
+          }}
+          noDataElement={<span>还没有运行记录</span>}
+        />
+      </div>
     </Card>
   )
 }

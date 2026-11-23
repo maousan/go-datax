@@ -40,6 +40,7 @@ import {
   type DataSourceInput,
   type DataSourceType,
 } from '../../api/dataSources'
+import useFillHeight from '../../hooks/useFillHeight'
 import listStyles from '../../style/list.module.less'
 import { formatTime } from '../../utils/format'
 
@@ -87,6 +88,7 @@ export default function DataSourcesPage() {
 
   const [form] = Form.useForm<DataSourceInput>()
   const [searchForm] = Form.useForm<{ name?: string }>()
+  const [tableRef, tableHeight] = useFillHeight(42)
   const listQuery = useDataSources(query)
   const createMutation = useCreateDataSource()
   const updateMutation = useUpdateDataSource()
@@ -286,7 +288,7 @@ export default function DataSourcesPage() {
   ]
 
   return (
-    <Card>
+    <Card className={listStyles.page}>
       <Typography.Title heading={6}>数据源</Typography.Title>
 
       <div className={listStyles['search-form-wrapper']}>
@@ -364,15 +366,18 @@ export default function DataSourcesPage() {
         />
       ) : null}
 
-      <Table<DataSource>
-        rowKey="id"
-        tableLayoutFixed
-        columns={columns}
-        data={listQuery.data ?? []}
-        loading={listQuery.isLoading}
-        pagination={false}
-        noDataElement={<Empty description="还没有数据源" />}
-      />
+      <div ref={tableRef} className={listStyles['table-fill']}>
+        <Table<DataSource>
+          rowKey="id"
+          tableLayoutFixed
+          columns={columns}
+          data={listQuery.data ?? []}
+          loading={listQuery.isLoading}
+          pagination={false}
+          scroll={{ y: tableHeight }}
+          noDataElement={<Empty description="还没有数据源" />}
+        />
+      </div>
 
       <Modal
         title={editing ? '编辑数据源' : '新建数据源'}

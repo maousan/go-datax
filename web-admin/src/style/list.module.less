@@ -1,3 +1,22 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 190px);
+  min-height: 420px;
+
+  :global(.arco-card-body) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+}
+
+.table-fill {
+  flex: 1;
+  min-height: 0;
+}
+
 .search-form-wrapper {
   display: flex;
   border-bottom: 1px solid var(--color-border-1);

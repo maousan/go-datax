@@ -25,7 +25,7 @@ import {
   IconSearch,
   IconStorage,
 } from '@arco-design/web-react/icon'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import { useDataSource, type DataSourceType } from '../../api/dataSources'
@@ -42,6 +42,7 @@ import {
   type Table as ExplorerTable,
 } from '../../api/explorer'
 import SqlEditor from '../../components/SqlEditor'
+import useFillHeight from '../../hooks/useFillHeight'
 import styles from './detail.module.less'
 
 const TYPE_LABELS: Record<DataSourceType, string> = {
@@ -128,27 +129,6 @@ function DataGrid({
       noDataElement={<Empty description="当前结果集没有任何记录" />}
     />
   )
-}
-
-function useFillHeight(offset: number) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [height, setHeight] = useState(240)
-
-  useEffect(() => {
-    const element = ref.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver((entries) => {
-      const available = entries[0]?.contentRect.height
-      if (available) {
-        setHeight(Math.max(120, Math.floor(available - offset)))
-      }
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [offset])
-
-  return [ref, height] as const
 }
 
 function TableDataPane({
