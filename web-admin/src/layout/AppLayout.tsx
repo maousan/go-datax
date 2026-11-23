@@ -2,7 +2,6 @@ import { Breadcrumb, Layout, Menu } from '@arco-design/web-react'
 import { IconHome, IconMenuFold, IconMenuUnfold } from '@arco-design/web-react/icon'
 import { useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
-import Footer from '../components/Footer'
 import NavBar from '../components/NavBar'
 import {
   breadcrumbFor,
@@ -103,7 +102,6 @@ export default function AppLayout() {
               <Outlet />
             </Content>
           </div>
-          <Footer />
         </Layout>
       </Layout>
     </Layout>
