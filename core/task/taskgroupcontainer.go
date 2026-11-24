@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/config"
-	"github.com/longkeyy/go-datax/common/logger"
-	"github.com/longkeyy/go-datax/common/statistics"
 	"github.com/longkeyy/go-datax/common/element"
+	"github.com/longkeyy/go-datax/common/logger"
+	"github.com/longkeyy/go-datax/common/plugin"
+	"github.com/longkeyy/go-datax/common/statistics"
+	"github.com/longkeyy/go-datax/common/transformer"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
 	"go.uber.org/zap"
 )
@@ -53,23 +54,25 @@ func (tgc *TaskGroupContainer) Start(readerTaskConfig, writerTaskConfig config.C
 	// Optimize buffer size based on data volume hints from split configuration
 	bufferSize := tgc.calculateOptimalBufferSize(readerTaskConfig)
 
-	// TODO: Transformer functionality temporarily removed, awaiting future reimplementation
-	// transformerExecutions, err := tgc.buildTransformerExecutions()
-	// if err != nil {
-	//	return fmt.Errorf("failed to build transformer executions: %v", err)
-	// }
+	transformerExecutions, err := tgc.buildTransformerExecutions()
+	if err != nil {
+		return fmt.Errorf("failed to build transformer executions: %v", err)
+	}
+	if len(transformerExecutions) > 0 {
+		defer transformer.CloseExecutions(transformerExecutions)
+		defer tgc.logTransformerStatistics(transformerExecutions)
+	}
 
 	// Setup data flow pipeline components
 	var recordSender plugin.RecordSender
 	var recordReceiver plugin.RecordReceiver
 
-	// TODO: Transformer functionality removed, awaiting future reimplementation
-	// if len(transformerExecutions) > 0 {
-	//	taskLogger.Warn("Transformers temporarily disabled due to API migration", zap.Int("skippedTransformers", len(transformerExecutions)))
-	// }
-
 	taskLogger.Debug("Creating standard channel")
-	channel := coreplugin.NewChannel(bufferSize)
+	var channel plugin.Channel = coreplugin.NewChannel(bufferSize)
+	if len(transformerExecutions) > 0 {
+		errorLimiter := statistics.NewErrorLimiter(tgc.configuration)
+		channel = coreplugin.NewTransformerChannel(channel, transformerExecutions, tgc.communication, errorLimiter)
+	}
 	defer channel.Close()
 	baseSender := coreplugin.NewRecordSender(channel)
 	baseReceiver := coreplugin.NewRecordReceiver(channel)
@@ -218,10 +221,7 @@ func (tgc *TaskGroupContainer) Start(readerTaskConfig, writerTaskConfig config.C
 		taskLogger.Warn("Writer destroy failed", zap.Error(err))
 	}
 
-	// TODO: Record transformer statistics - temporarily skipped
-	// if transformerChannel != nil {
-	//	tgc.logTransformerStatistics(transformerChannel)
-	// }
+	// Transformer statistics are emitted by the deferred logTransformerStatistics.
 
 	// Finalize statistics and mark task group as completed
 	endTime := time.Now()
@@ -364,55 +364,56 @@ func (m *MockWriterTask) Destroy() error {
 	return nil
 }
 
-// TODO: buildTransformerExecutions function removed, awaiting transformer functionality reimplementation
-// func (tgc *TaskGroupContainer) buildTransformerExecutions() ([]*transformer.TransformerExecution, error) {
-//	// 从job.content[0].transformer读取配置
-//	contentList := tgc.configuration.GetListConfiguration("job.content")
-//	if len(contentList) == 0 {
-//		return nil, nil
-//	}
-//
-//	content := contentList[0]
-//	transformerConfigs := content.GetListConfiguration("transformer")
-//	if len(transformerConfigs) == 0 {
-//		return nil, nil
-//	}
-//
-//	taskLogger := logger.TaskGroupLogger(tgc.taskGroupId)
-//	taskLogger.Info("Building transformer executions", zap.Int("count", len(transformerConfigs)))
-//
-//	executions, err := transformer.BuildTransformerExecutions(transformerConfigs)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	// 记录加载的Transformer
-//	for _, execution := range executions {
-//		taskLogger.Info("Loaded transformer", zap.String("name", execution.GetTransformerName()))
-//	}
-//
-//	return executions, nil
-// }
+// buildTransformerExecutions reads job.content[0].transformer and builds the
+// configured chain. Missing content/transformer means "no transformation".
+func (tgc *TaskGroupContainer) buildTransformerExecutions() ([]*transformer.Execution, error) {
+	contentList := tgc.configuration.GetListConfiguration("job.content")
+	if len(contentList) == 0 {
+		return nil, nil
+	}
 
-// logTransformerStatistics records transformer performance metrics - temporarily disabled
-// func (tgc *TaskGroupContainer) logTransformerStatistics(transformerChannel *plugin.TransformerChannel) {
-//	stats := transformerChannel.GetTransformerStatistics()
-//	if len(stats) == 0 {
-//		return
-//	}
-//
-//	taskLogger := logger.TaskGroupLogger(tgc.taskGroupId)
-//	taskLogger.Info("Transformer Statistics")
-//	for name, stat := range stats {
-//		taskLogger.Info("Transformer performance",
-//			zap.String("name", name),
-//			zap.Int64("success", stat["success"]),
-//			zap.Int64("failed", stat["failed"]),
-//			zap.Int64("filtered", stat["filter"]))
-//	}
-// }
+	transformerConfigs := contentList[0].GetListConfiguration("transformer")
+	if len(transformerConfigs) == 0 {
+		return nil, nil
+	}
 
-// logErrorStatistics outputs error statistics for debugging and monitoring.
+	taskLogger := logger.TaskGroupLogger(tgc.taskGroupId)
+	taskLogger.Info("Building transformer executions", zap.Int("count", len(transformerConfigs)))
+
+	executions, err := transformer.BuildExecutions(transformerConfigs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, execution := range executions {
+		fields := []zap.Field{zap.String("name", execution.Name())}
+		if columnIndex := execution.ColumnIndex(); columnIndex >= 0 {
+			fields = append(fields, zap.Int("columnIndex", columnIndex))
+		}
+		taskLogger.Info("Loaded transformer", fields...)
+	}
+
+	return executions, nil
+}
+
+// logTransformerStatistics emits per-transformer counters after a task group
+// finishes, including the dirty/filtered split.
+func (tgc *TaskGroupContainer) logTransformerStatistics(executions []*transformer.Execution) {
+	if len(executions) == 0 {
+		return
+	}
+
+	taskLogger := logger.TaskGroupLogger(tgc.taskGroupId)
+	taskLogger.Info("Transformer Statistics")
+	for _, execution := range executions {
+		taskLogger.Info("Transformer performance",
+			zap.String("name", execution.Name()),
+			zap.Int64("success", execution.SuccessRecords()),
+			zap.Int64("failed", execution.FailedRecords()),
+			zap.Int64("filtered", execution.FilterRecords()),
+			zap.String("usedTime", statistics.DefaultCommunicationTool.FormatNanos(execution.UsedNanos())))
+	}
+}
 func (tgc *TaskGroupContainer) logErrorStatistics(errorLimiter *statistics.ErrorLimiter) {
 	stats := errorLimiter.GetStatistics()
 	taskLogger := logger.TaskGroupLogger(tgc.taskGroupId)

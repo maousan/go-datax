@@ -1,0 +1,38 @@
+{
+  "job": {
+    "setting": {
+      "speed": {
+        "channel": 1
+      }
+    },
+    "content": [
+      {
+        "reader": {
+          "name": "streamreader",
+          "parameter": {
+            "column": [
+              { "value": "addax-script", "type": "string" },
+              { "value": "7", "type": "long" }
+            ],
+            "sliceRecordCount": 3
+          }
+        },
+        "transformer": [
+          {
+            "name": "dx_script",
+            "parameter": {
+              "language": "javascript",
+              "code": "function transform() { set_string(0, get_string(0).toUpperCase()); set_long(1, get_long(1) * 2); return true; }"
+            }
+          }
+        ],
+        "writer": {
+          "name": "streamwriter",
+          "parameter": {
+            "print": true
+          }
+        }
+      }
+    ]
+  }
+}

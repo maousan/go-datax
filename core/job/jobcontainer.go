@@ -10,6 +10,7 @@ import (
 	"github.com/longkeyy/go-datax/common/logger"
 	"github.com/longkeyy/go-datax/common/plugin"
 	"github.com/longkeyy/go-datax/common/statistics"
+	"github.com/longkeyy/go-datax/common/transformer"
 	coreplugin "github.com/longkeyy/go-datax/core/registry"
 	"github.com/longkeyy/go-datax/core/task"
 	"go.uber.org/zap"
@@ -155,6 +156,12 @@ func (jc *JobContainer) init() error {
 		return fmt.Errorf("writer plugin name is required")
 	}
 
+	// Validate transformer configuration before any writer side effects (e.g.
+	// preSql table creation) so typos fail fast.
+	if err := validateTransformerConfig(content.GetListConfiguration("transformer")); err != nil {
+		return err
+	}
+
 	// Configure parallel channels, defaulting to 1 for safety
 	jc.needChannels = jc.configuration.GetIntWithDefault("job.setting.speed.channel", 1)
 	if jc.needChannels <= 0 {
@@ -167,6 +174,20 @@ func (jc *JobContainer) init() error {
 		zap.String("writerPlugin", jc.writerPlugin),
 		zap.Int("channels", jc.needChannels))
 
+	return nil
+}
+
+// validateTransformerConfig builds (and discards) the configured transformers
+// to surface configuration errors before the job starts reading or writing.
+func validateTransformerConfig(transformerConfigs []config.Configuration) error {
+	if len(transformerConfigs) == 0 {
+		return nil
+	}
+	executions, err := transformer.BuildExecutions(transformerConfigs)
+	if err != nil {
+		return fmt.Errorf("invalid transformer configuration: %v", err)
+	}
+	transformer.CloseExecutions(executions)
 	return nil
 }
 
@@ -344,13 +365,22 @@ func (jc *JobContainer) logStatistics() {
 	appLogger.Info("Total Error Records", zap.Int64("totalErrorRecords", statistics.DefaultCommunicationTool.GetTotalErrorRecords(communication)))
 
 	// Include transformer metrics only when transformations were actually performed
-	if communication.GetLongCounter(statistics.TRANSFORMER_SUCCEED_RECORDS) > 0 ||
+	if communication.GetLongCounter(statistics.TRANSFORMER_INPUT_RECORDS) > 0 ||
+		communication.GetLongCounter(statistics.TRANSFORMER_OUTPUT_RECORDS) > 0 ||
+		communication.GetLongCounter(statistics.TRANSFORMER_DIRTY_RECORDS) > 0 ||
+		communication.GetLongCounter(statistics.TRANSFORMER_SUCCEED_RECORDS) > 0 ||
 		communication.GetLongCounter(statistics.TRANSFORMER_FAILED_RECORDS) > 0 ||
 		communication.GetLongCounter(statistics.TRANSFORMER_FILTER_RECORDS) > 0 {
+		appLogger.Info("Transform Input Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_INPUT_RECORDS)))
+		appLogger.Info("Transform Input Bytes", zap.Int64("bytes", communication.GetLongCounter(statistics.TRANSFORMER_INPUT_BYTES)))
+		appLogger.Info("Transform Output Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_OUTPUT_RECORDS)))
+		appLogger.Info("Transform Output Bytes", zap.Int64("bytes", communication.GetLongCounter(statistics.TRANSFORMER_OUTPUT_BYTES)))
 		appLogger.Info("Transformer Success Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_SUCCEED_RECORDS)))
 		appLogger.Info("Transformer Failed Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_FAILED_RECORDS)))
 		appLogger.Info("Transformer Filter Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_FILTER_RECORDS)))
-		appLogger.Info("Transformer Used Time", zap.String("usedTime", statistics.DefaultCommunicationTool.FormatTime(communication.GetLongCounter(statistics.TRANSFORMER_USED_TIME))))
+		appLogger.Info("Transformer Dirty Records", zap.Int64("records", communication.GetLongCounter(statistics.TRANSFORMER_DIRTY_RECORDS)))
+		appLogger.Info("Transformer Dirty Bytes", zap.Int64("bytes", communication.GetLongCounter(statistics.TRANSFORMER_DIRTY_BYTES)))
+		appLogger.Info("Transformer Used Time", zap.String("usedTime", statistics.DefaultCommunicationTool.FormatNanos(communication.GetLongCounter(statistics.TRANSFORMER_USED_TIME))))
 	}
 
 	appLogger.Info("==============================================================================================")

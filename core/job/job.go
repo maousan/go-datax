@@ -45,36 +45,49 @@ type Job struct {
 
 // JobStatus provides a lightweight snapshot of job state
 type JobStatus struct {
-	ID        string           `json:"id"`
-	State     JobState         `json:"state"`
-	StartTime time.Time        `json:"startTime"`
-	EndTime   time.Time        `json:"endTime,omitempty"`
-	Progress  *ProgressInfo    `json:"progress,omitempty"`
-	Stats     *StatsSummary    `json:"stats,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	ID        string        `json:"id"`
+	State     JobState      `json:"state"`
+	StartTime time.Time     `json:"startTime"`
+	EndTime   time.Time     `json:"endTime,omitempty"`
+	Progress  *ProgressInfo `json:"progress,omitempty"`
+	Stats     *StatsSummary `json:"stats,omitempty"`
+	Error     string        `json:"error,omitempty"`
+}
+
+// TransformerStats exposes transform chain metrics (Addax style).
+type TransformerStats struct {
+	InputRecords  int64 `json:"inputRecords"`
+	InputBytes    int64 `json:"inputBytes"`
+	OutputRecords int64 `json:"outputRecords"`
+	OutputBytes   int64 `json:"outputBytes"`
+	DirtyRecords  int64 `json:"dirtyRecords"`
+	DirtyBytes    int64 `json:"dirtyBytes"`
+	UsedNanos     int64 `json:"usedNanos"`
 }
 
 // ProgressInfo represents real-time execution progress
 type ProgressInfo struct {
-	TotalRecords   int64   `json:"totalRecords"`
-	SucceedRecords int64   `json:"succeedRecords"`
-	FailedRecords  int64   `json:"failedRecords"`
-	FilterRecords  int64   `json:"filterRecords"`
-	TotalBytes     int64   `json:"totalBytes"`
-	ByteSpeed      int64   `json:"byteSpeed"`
-	RecordSpeed    int64   `json:"recordSpeed"`
-	Percentage     float64 `json:"percentage"`
+	TotalRecords   int64            `json:"totalRecords"`
+	SucceedRecords int64            `json:"succeedRecords"`
+	FailedRecords  int64            `json:"failedRecords"`
+	FilterRecords  int64            `json:"filterRecords"`
+	TotalBytes     int64            `json:"totalBytes"`
+	ByteSpeed      int64            `json:"byteSpeed"`
+	RecordSpeed    int64            `json:"recordSpeed"`
+	Percentage     float64          `json:"percentage"`
+	Transformer    TransformerStats `json:"transformer"`
 }
 
 // StatsSummary is a lightweight final statistics summary (kept after job completes)
 type StatsSummary struct {
-	TotalRecords   int64         `json:"totalRecords"`
-	SucceedRecords int64         `json:"succeedRecords"`
-	FailedRecords  int64         `json:"failedRecords"`
-	FilterRecords  int64         `json:"filterRecords"`
-	TotalBytes     int64         `json:"totalBytes"`
-	Duration       time.Duration `json:"duration"`
-	AverageSpeed   float64       `json:"averageSpeed"`
+	TotalRecords   int64            `json:"totalRecords"`
+	SucceedRecords int64            `json:"succeedRecords"`
+	FailedRecords  int64            `json:"failedRecords"`
+	FilterRecords  int64            `json:"filterRecords"`
+	TotalBytes     int64            `json:"totalBytes"`
+	Duration       time.Duration    `json:"duration"`
+	AverageSpeed   float64          `json:"averageSpeed"`
+	Transformer    TransformerStats `json:"transformer"`
 }
 
 // NewJob creates a new job instance (but does not start it)
@@ -222,6 +235,7 @@ func commToProgress(comm *statistics.Communication) *ProgressInfo {
 		ByteSpeed:      comm.GetLongCounter(statistics.BYTE_SPEED),
 		RecordSpeed:    comm.GetLongCounter(statistics.RECORD_SPEED),
 		Percentage:     percentage,
+		Transformer:    transformerStatsFrom(comm),
 	}
 }
 
@@ -246,6 +260,21 @@ func commToSummary(comm *statistics.Communication, duration time.Duration) *Stat
 		TotalBytes:     statistics.DefaultCommunicationTool.GetTotalReadBytes(comm),
 		Duration:       duration,
 		AverageSpeed:   avgSpeed,
+		Transformer:    transformerStatsFrom(comm),
+	}
+}
+
+// transformerStatsFrom extracts the transform chain counters from a
+// Communication snapshot.
+func transformerStatsFrom(comm *statistics.Communication) TransformerStats {
+	return TransformerStats{
+		InputRecords:  comm.GetLongCounter(statistics.TRANSFORMER_INPUT_RECORDS),
+		InputBytes:    comm.GetLongCounter(statistics.TRANSFORMER_INPUT_BYTES),
+		OutputRecords: comm.GetLongCounter(statistics.TRANSFORMER_OUTPUT_RECORDS),
+		OutputBytes:   comm.GetLongCounter(statistics.TRANSFORMER_OUTPUT_BYTES),
+		DirtyRecords:  comm.GetLongCounter(statistics.TRANSFORMER_DIRTY_RECORDS),
+		DirtyBytes:    comm.GetLongCounter(statistics.TRANSFORMER_DIRTY_BYTES),
+		UsedNanos:     comm.GetLongCounter(statistics.TRANSFORMER_USED_TIME),
 	}
 }
 

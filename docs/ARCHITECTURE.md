@@ -367,9 +367,12 @@ func init() {
 4. 在main.go中添加import
 
 ### 新增Transformer
-1. 实现Transformer接口
-2. 注册到TransformerRegistry
-3. 支持配置驱动的链式处理
+1. 在 `common/transformer` 中实现 `Transformer` 接口（`Name()` + `Evaluate()`）
+2. 列级转换器提供 `Factory`（`func(columnIndex int, paras []string) (Transformer, error)`），在 `init()` 中调用 `Register(name, factory)`
+3. 记录级转换器（如 `dx_script`）提供 `RecordFactory`（`func(params config.Configuration) (Transformer, error)`），在 `init()` 中调用 `RegisterRecord(name, factory)`
+4. 工厂方法中完成参数校验，配置错误在作业启动阶段暴露
+5. 转换链由 `core/registry.TransformerChannel` 执行，并自动参与脏数据/计量统计
+6. 依赖外部引擎的转换器（如 `plugins/transformer/script`）需在 `cmd/datax/main.go` 中 blank import 以触发注册
 
 ## 9. 与Java版本对比
 

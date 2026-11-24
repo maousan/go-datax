@@ -2,8 +2,11 @@ package statistics
 
 import (
 	"fmt"
-	"github.com/longkeyy/go-datax/common/config"
+	"strconv"
+	"strings"
 	"sync"
+
+	"github.com/longkeyy/go-datax/common/config"
 )
 
 // ErrorLimiter 错误控制器
@@ -25,12 +28,54 @@ func NewErrorLimiter(configuration config.Configuration) *ErrorLimiter {
 	errorLimit := configuration.GetConfiguration("job.setting.errorLimit")
 
 	maxErrorRecord := errorLimit.GetIntWithDefault("record", 0)
-	maxErrorPercentage := float64(errorLimit.GetIntWithDefault("percentage", 100)) / 100.0
+	maxErrorPercentage := parseErrorPercentage(errorLimit.Get("percentage"))
 
 	return &ErrorLimiter{
 		maxErrorRecord:     maxErrorRecord,
 		maxErrorPercentage: maxErrorPercentage,
 	}
+}
+
+// parseErrorPercentage 兼容两种 errorLimit.percentage 写法：
+//   - DataX 风格的小数比例：0.02 表示 2%
+//   - 百分数写法：5 表示 5%
+//
+// 缺省或非法值视为 100%（不限制）。
+func parseErrorPercentage(raw interface{}) float64 {
+	if raw == nil {
+		return 1.0
+	}
+
+	var value float64
+	switch typed := raw.(type) {
+	case float64:
+		value = typed
+	case float32:
+		value = float64(typed)
+	case int:
+		value = float64(typed)
+	case int64:
+		value = float64(typed)
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 1.0
+		}
+		value = parsed
+	default:
+		return 1.0
+	}
+
+	if value < 0 {
+		return 1.0
+	}
+	if value > 1 {
+		value /= 100.0
+	}
+	if value > 1 {
+		value = 1.0
+	}
+	return value
 }
 
 // AddTotalRecord 增加总记录数
@@ -84,9 +129,9 @@ func (el *ErrorLimiter) GetStatistics() Statistics {
 	defer el.mutex.RUnlock()
 
 	return Statistics{
-		TotalRecords:  el.totalRecords,
-		ErrorRecords:  el.errorRecords,
-		FilterRecords: el.filterRecords,
+		TotalRecords:   el.totalRecords,
+		ErrorRecords:   el.errorRecords,
+		FilterRecords:  el.filterRecords,
 		SuccessRecords: el.totalRecords - el.errorRecords,
 	}
 }

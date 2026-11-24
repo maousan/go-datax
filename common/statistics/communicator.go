@@ -144,11 +144,16 @@ func (tgc *TaskCommunicator) Report(communication *Communication) {
 
 	// 输出简化的进度信息
 	snapshot := DefaultCommunicationTool.GetSnapshotStruct(communication)
-	taskLogger.Info("TaskGroup progress update",
+	fields := []zap.Field{
 		zap.String("total", snapshot.Total),
 		zap.String("speed", snapshot.Speed),
 		zap.String("error", snapshot.Error),
-		zap.String("percentage", snapshot.Percentage))
+		zap.String("percentage", snapshot.Percentage),
+	}
+	if snapshot.Transformer != "" {
+		fields = append(fields, zap.String("transformer", snapshot.Transformer))
+	}
+	taskLogger.Info("TaskGroup progress update", fields...)
 }
 
 // JobReporter Job级别的汇报器

@@ -40,10 +40,16 @@ const (
 	WAIT_READER_TIME = "waitReaderTime"
 
 	// Transformer指标
-	TRANSFORMER_USED_TIME       = "totalTransformerUsedTime"
+	TRANSFORMER_USED_TIME       = "totalTransformerUsedTime" // 纳秒
 	TRANSFORMER_SUCCEED_RECORDS = "totalTransformerSuccessRecords"
 	TRANSFORMER_FAILED_RECORDS  = "totalTransformerFailedRecords"
 	TRANSFORMER_FILTER_RECORDS  = "totalTransformerFilterRecords"
+	TRANSFORMER_INPUT_RECORDS   = "totalTransformerInputRecords"
+	TRANSFORMER_INPUT_BYTES     = "totalTransformerInputBytes"
+	TRANSFORMER_OUTPUT_RECORDS  = "totalTransformerOutputRecords"
+	TRANSFORMER_OUTPUT_BYTES    = "totalTransformerOutputBytes"
+	TRANSFORMER_DIRTY_RECORDS   = "totalTransformerDirtyRecords"
+	TRANSFORMER_DIRTY_BYTES     = "totalTransformerDirtyBytes"
 	TRANSFORMER_NAME_PREFIX     = "usedTimeByTransformer_"
 )
 
@@ -213,18 +219,20 @@ func (ct *CommunicationTool) getError(communication *Communication) string {
 }
 
 func (ct *CommunicationTool) getTransformer(communication *Communication) string {
-	if communication.GetLongCounter(TRANSFORMER_USED_TIME) > 0 ||
-		communication.GetLongCounter(TRANSFORMER_SUCCEED_RECORDS) > 0 ||
-		communication.GetLongCounter(TRANSFORMER_FAILED_RECORDS) > 0 ||
-		communication.GetLongCounter(TRANSFORMER_FILTER_RECORDS) > 0 {
+	inputRecords := communication.GetLongCounter(TRANSFORMER_INPUT_RECORDS)
+	outputRecords := communication.GetLongCounter(TRANSFORMER_OUTPUT_RECORDS)
+	successRecords := communication.GetLongCounter(TRANSFORMER_SUCCEED_RECORDS)
+	failedRecords := communication.GetLongCounter(TRANSFORMER_FAILED_RECORDS)
+	filterRecords := communication.GetLongCounter(TRANSFORMER_FILTER_RECORDS)
+	usedTime := communication.GetLongCounter(TRANSFORMER_USED_TIME)
 
-		return fmt.Sprintf("Transformer Success %d records | Transformer Error %d records | Transformer Filter %d records | Transformer usedTime %s",
-			communication.GetLongCounter(TRANSFORMER_SUCCEED_RECORDS),
-			communication.GetLongCounter(TRANSFORMER_FAILED_RECORDS),
-			communication.GetLongCounter(TRANSFORMER_FILTER_RECORDS),
-			ct.FormatTime(communication.GetLongCounter(TRANSFORMER_USED_TIME)))
+	if inputRecords == 0 && outputRecords == 0 && successRecords == 0 &&
+		failedRecords == 0 && filterRecords == 0 && usedTime == 0 {
+		return ""
 	}
-	return ""
+
+	return fmt.Sprintf("Transform %d records(in), %d records(out) | Transformer Success %d records | Transformer Error %d records | Transformer Filter %d records | Transformer usedTime %s",
+		inputRecords, outputRecords, successRecords, failedRecords, filterRecords, ct.FormatNanos(usedTime))
 }
 
 func (ct *CommunicationTool) getPercentage(communication *Communication) string {
@@ -276,6 +284,14 @@ func (ct *CommunicationTool) FormatTime(millis int64) string {
 	}
 }
 
+// FormatNanos 格式化纳秒耗时（Transformer 计量使用纳秒精度）
+func (ct *CommunicationTool) FormatNanos(nanos int64) string {
+	if nanos < 0 {
+		return "0s"
+	}
+	return time.Duration(nanos).String()
+}
+
 // JSONSnapshot JSON格式的进度快照
 type JSONSnapshot struct {
 	TotalBytes     int64   `json:"totalBytes"`
@@ -289,6 +305,14 @@ type JSONSnapshot struct {
 	Percentage     float64 `json:"percentage"`
 	WaitReaderTime int64   `json:"waitReaderTime"`
 	WaitWriterTime int64   `json:"waitWriterTime"`
+
+	TransformerInputRecords  int64 `json:"transformerInputRecords"`
+	TransformerInputBytes    int64 `json:"transformerInputBytes"`
+	TransformerOutputRecords int64 `json:"transformerOutputRecords"`
+	TransformerOutputBytes   int64 `json:"transformerOutputBytes"`
+	TransformerDirtyRecords  int64 `json:"transformerDirtyRecords"`
+	TransformerDirtyBytes    int64 `json:"transformerDirtyBytes"`
+	TransformerUsedNanos     int64 `json:"transformerUsedNanos"`
 }
 
 // GetJSONSnapshot 获取JSON格式的进度快照
@@ -305,6 +329,14 @@ func (ct *CommunicationTool) GetJSONSnapshot(communication *Communication) (stri
 		Percentage:     float64(communication.GetLongCounter(PERCENTAGE)),
 		WaitReaderTime: communication.GetLongCounter(WAIT_READER_TIME),
 		WaitWriterTime: communication.GetLongCounter(WAIT_WRITER_TIME),
+
+		TransformerInputRecords:  communication.GetLongCounter(TRANSFORMER_INPUT_RECORDS),
+		TransformerInputBytes:    communication.GetLongCounter(TRANSFORMER_INPUT_BYTES),
+		TransformerOutputRecords: communication.GetLongCounter(TRANSFORMER_OUTPUT_RECORDS),
+		TransformerOutputBytes:   communication.GetLongCounter(TRANSFORMER_OUTPUT_BYTES),
+		TransformerDirtyRecords:  communication.GetLongCounter(TRANSFORMER_DIRTY_RECORDS),
+		TransformerDirtyBytes:    communication.GetLongCounter(TRANSFORMER_DIRTY_BYTES),
+		TransformerUsedNanos:     communication.GetLongCounter(TRANSFORMER_USED_TIME),
 	}
 
 	bytes, err := json.Marshal(snapshot)

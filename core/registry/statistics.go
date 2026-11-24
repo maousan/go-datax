@@ -61,9 +61,9 @@ func (srr *StatisticsRecordReceiver) GetFromReader() (element.Record, error) {
 			srr.communication.IncreaseCounter(statistics.WRITE_FAILED_RECORDS, 1)
 		}
 	} else {
-		// 记录读取成功统计
-		srr.communication.IncreaseCounter(statistics.WRITE_SUCCEED_RECORDS, 1)
-		srr.communication.IncreaseCounter(statistics.WRITE_SUCCEED_BYTES, int64(record.GetByteSize()))
+		// 记录被 Writer 接收统计（实际写入成功数 = 接收数 - 失败数）
+		srr.communication.IncreaseCounter(statistics.WRITE_RECEIVED_RECORDS, 1)
+		srr.communication.IncreaseCounter(statistics.WRITE_RECEIVED_BYTES, int64(record.GetByteSize()))
 	}
 
 	return record, err
