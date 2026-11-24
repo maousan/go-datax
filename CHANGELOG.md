@@ -28,6 +28,11 @@ All notable changes to this project will be documented in this file.
   - CLI 模式完全向后兼容，无破坏性变更
 
 ### Added
+- **管理台「服务监控」页面**:
+  - 新增 `GET /api/v1/monitor`，每 10 秒采样进程 CPU 使用率、协程数量与状态、堆内存和 GC 次数，保留最近 15 分钟
+  - 新增「运行中心 → 服务监控」页面，包含处理器、协程、协程状态、内存四组趋势图，每 10 秒自动刷新
+  - 协程状态通过解析运行时协程堆栈归为运行中、阻塞中、等待中、系统调用与其他
+  - CPU 使用率按整机核心数折算，Windows 使用 `GetProcessTimes`、Unix 使用 `getrusage` 采集进程 CPU 时间
 - **Multi-Table Write Support with Intuitive Channel Semantics**: Enhanced multi-table split logic beyond DataX Java
   - **Channel Semantic**: `channel` parameter always means "concurrency per table" (not total tasks)
   - **Single-Table Mode**: `channel: N` → Creates N parallel tasks for that table

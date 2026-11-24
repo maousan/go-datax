@@ -34,7 +34,10 @@ export const menuRoutes: MenuRoute[] = [
     key: 'operations',
     name: '运行中心',
     icon: IconHistory,
-    children: [{ key: 'run-history', name: '运行历史', path: '/runs' }],
+    children: [
+      { key: 'run-history', name: '运行历史', path: '/runs' },
+      { key: 'service-monitor', name: '服务监控', path: '/monitor' },
+    ],
   },
   {
     key: 'settings',
@@ -66,7 +69,7 @@ export function selectedMenuKey(pathname: string): string {
 export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
   if (pathname.startsWith('/data-sources') || pathname.startsWith('/sync-jobs')) return ['data']
-  if (pathname.startsWith('/runs')) return ['operations']
+  if (pathname.startsWith('/runs') || pathname.startsWith('/monitor')) return ['operations']
   return []
 }
 

@@ -1,0 +1,67 @@
+.page {
+  width: 100%;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.card {
+  height: 100%;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin: 16px 0 4px;
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  line-height: 22px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--color-text-3);
+  white-space: nowrap;
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chart {
+  height: 240px;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}

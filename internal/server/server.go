@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/longkeyy/go-datax/internal/execution"
+	"github.com/longkeyy/go-datax/internal/monitor"
 	"github.com/longkeyy/go-datax/internal/notify"
 	"github.com/longkeyy/go-datax/internal/store"
 )
@@ -28,6 +29,7 @@ type Server struct {
 	dataStore    *store.Store
 	executor     *execution.Manager
 	notifier     *notify.Notifier
+	monitor      *monitor.Sampler
 	dataxVersion string
 	handler      http.Handler
 }
@@ -62,6 +64,8 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 			executor.SetOnFinish(s.notifier.Notify)
 		}
 	}
+	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
+	s.monitor.Start()
 	s.applySavedRuntimeSettings()
 
 	s.handler = s.routes()
@@ -145,6 +149,7 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/runs/{id}/snapshot", s.handleRunSnapshot)
 
 	protected.HandleFunc("GET /api/v1/overview", s.handleOverview)
+	protected.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
 
 	protected.HandleFunc("GET /api/v1/settings/notifications", s.handleGetNotificationSettings)
 	protected.HandleFunc("PUT /api/v1/settings/notifications", s.handleUpdateNotificationSettings)

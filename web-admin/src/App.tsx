@@ -4,6 +4,7 @@ import AppLayout from './layout/AppLayout'
 import DataSourceDetailPage from './pages/data-sources/detail'
 import DataSourcesPage from './pages/data-sources'
 import LoginPage from './pages/login'
+import MonitorPage from './pages/monitor'
 import OverviewPage from './pages/overview'
 import RunDetailPage from './pages/runs/detail'
 import RunsPage from './pages/runs'
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="sync-jobs/:id" element={<SyncJobDetailPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />
+        <Route path="monitor" element={<MonitorPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
