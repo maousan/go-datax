@@ -121,6 +121,8 @@ func main() {
 		log.Printf("已生成管理账号 %s，初始密码：%s（仅显示一次，请妥善保存）", cfg.Auth.Username, generated.Password)
 	}
 
+	srv.StartScheduler()
+
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),

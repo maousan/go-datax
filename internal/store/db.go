@@ -26,7 +26,7 @@ func Open(path string) (*Store, error) {
 	if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
 		return nil, fmt.Errorf("enable WAL on %s: %w", path, err)
 	}
-	if err := db.AutoMigrate(&DataSource{}, &SyncJob{}, &JobRun{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&DataSource{}, &QueryTemplate{}, &SyncJob{}, &CollectTask{}, &JobRun{}, &AlertLog{}, &AppSetting{}); err != nil {
 		return nil, fmt.Errorf("migrate database %s: %w", path, err)
 	}
 

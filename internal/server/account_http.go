@@ -33,7 +33,8 @@ func (s *Server) handleUpdateAccountSettings(w http.ResponseWriter, r *http.Requ
 
 	current := s.config.Auth
 	if !VerifyPassword(current.Password, req.CurrentPassword) {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "当前密码不正确")
+		// 当前密码错误属于表单校验，返回 400；避免前端把它当成登录态失效而强制退出。
+		writeError(w, http.StatusBadRequest, "invalid_credentials", "当前密码不正确")
 		return
 	}
 

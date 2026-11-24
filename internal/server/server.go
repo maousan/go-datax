@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/longkeyy/go-datax/internal/alert"
 	"github.com/longkeyy/go-datax/internal/execution"
 	"github.com/longkeyy/go-datax/internal/monitor"
-	"github.com/longkeyy/go-datax/internal/notify"
 	"github.com/longkeyy/go-datax/internal/store"
 )
 
@@ -28,7 +28,8 @@ type Server struct {
 	tokens       *TokenService
 	dataStore    *store.Store
 	executor     *execution.Manager
-	notifier     *notify.Notifier
+	alerts       *alert.Manager
+	scheduler    *collectScheduler
 	monitor      *monitor.Sampler
 	dataxVersion string
 	handler      http.Handler
@@ -55,21 +56,36 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 		assets:     assets,
 		tokens:     tokens,
 		dataStore:  dataStore,
-		notifier:   notify.New(dataStore),
+		alerts:     alert.New(dataStore),
 	}
 	for _, executor := range executors {
 		if executor != nil {
 			s.executor = executor
 			s.dataxVersion = executor.DataXVersion()
-			executor.SetOnFinish(s.notifier.Notify)
+			executor.SetOnFinish(s.alerts.Notify)
 		}
 	}
+	s.scheduler = newCollectScheduler(s)
 	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
 	s.monitor.Start()
 	s.applySavedRuntimeSettings()
 
 	s.handler = s.routes()
 	return s, nil
+}
+
+// StartScheduler 启动采集任务调度循环。
+func (s *Server) StartScheduler() {
+	if s.scheduler != nil {
+		s.scheduler.Start()
+	}
+}
+
+// StopScheduler 停止采集任务调度循环。
+func (s *Server) StopScheduler() {
+	if s.scheduler != nil {
+		s.scheduler.Stop()
+	}
 }
 
 func (s *Server) applySavedRuntimeSettings() {
@@ -127,6 +143,14 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/data-sources/{id}/rows", s.handleDataSourceRows)
 	protected.HandleFunc("POST /api/v1/data-sources/{id}/query", s.handleDataSourceQuery)
 
+	protected.HandleFunc("GET /api/v1/query-templates", s.handleListQueryTemplates)
+	protected.HandleFunc("POST /api/v1/query-templates", s.handleCreateQueryTemplate)
+	protected.HandleFunc("/api/v1/query-templates", methodNotAllowed("GET, POST"))
+	protected.HandleFunc("GET /api/v1/query-templates/{id}", s.handleGetQueryTemplate)
+	protected.HandleFunc("PUT /api/v1/query-templates/{id}", s.handleUpdateQueryTemplate)
+	protected.HandleFunc("DELETE /api/v1/query-templates/{id}", s.handleDeleteQueryTemplate)
+	protected.HandleFunc("/api/v1/query-templates/{id}", methodNotAllowed("GET, PUT, DELETE"))
+
 	protected.HandleFunc("GET /api/v1/sync-jobs", s.handleListSyncJobs)
 	protected.HandleFunc("POST /api/v1/sync-jobs", s.handleCreateSyncJob)
 	protected.HandleFunc("POST /api/v1/sync-jobs/import", s.handleImportSyncJob)
@@ -138,6 +162,16 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/duplicate", s.handleDuplicateSyncJob)
 	protected.HandleFunc("GET /api/v1/sync-jobs/{id}/export", s.handleExportSyncJob)
 	protected.HandleFunc("POST /api/v1/sync-jobs/{id}/runs", s.handleStartRun)
+
+	protected.HandleFunc("GET /api/v1/collect-tasks", s.handleListCollectTasks)
+	protected.HandleFunc("POST /api/v1/collect-tasks", s.handleCreateCollectTask)
+	protected.HandleFunc("/api/v1/collect-tasks", methodNotAllowed("GET, POST"))
+	protected.HandleFunc("GET /api/v1/collect-tasks/{id}", s.handleGetCollectTask)
+	protected.HandleFunc("PUT /api/v1/collect-tasks/{id}", s.handleUpdateCollectTask)
+	protected.HandleFunc("DELETE /api/v1/collect-tasks/{id}", s.handleDeleteCollectTask)
+	protected.HandleFunc("/api/v1/collect-tasks/{id}", methodNotAllowed("GET, PUT, DELETE"))
+	protected.HandleFunc("POST /api/v1/collect-tasks/{id}/run", s.handleRunCollectTask)
+	protected.HandleFunc("/api/v1/collect-tasks/{id}/run", methodNotAllowed(http.MethodPost))
 
 	protected.HandleFunc("GET /api/v1/runs", s.handleListRuns)
 	protected.HandleFunc("GET /api/v1/runs/{id}", s.handleGetRun)
@@ -151,11 +185,14 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/overview", s.handleOverview)
 	protected.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
 
-	protected.HandleFunc("GET /api/v1/settings/notifications", s.handleGetNotificationSettings)
-	protected.HandleFunc("PUT /api/v1/settings/notifications", s.handleUpdateNotificationSettings)
-	protected.HandleFunc("/api/v1/settings/notifications", methodNotAllowed("GET, PUT"))
-	protected.HandleFunc("POST /api/v1/settings/notifications/test", s.handleTestNotification)
-	protected.HandleFunc("/api/v1/settings/notifications/test", methodNotAllowed(http.MethodPost))
+	protected.HandleFunc("GET /api/v1/alerts/config", s.handleGetAlertConfig)
+	protected.HandleFunc("PUT /api/v1/alerts/config", s.handleUpdateAlertConfig)
+	protected.HandleFunc("/api/v1/alerts/config", methodNotAllowed("GET, PUT"))
+	protected.HandleFunc("POST /api/v1/alerts/config/test", s.handleTestAlertChannel)
+	protected.HandleFunc("/api/v1/alerts/config/test", methodNotAllowed(http.MethodPost))
+	protected.HandleFunc("GET /api/v1/alerts/logs", s.handleListAlertLogs)
+	protected.HandleFunc("DELETE /api/v1/alerts/logs", s.handleClearAlertLogs)
+	protected.HandleFunc("/api/v1/alerts/logs", methodNotAllowed("GET, DELETE"))
 
 	protected.HandleFunc("GET /api/v1/settings/account", s.handleGetAccountSettings)
 	protected.HandleFunc("PUT /api/v1/settings/account", s.handleUpdateAccountSettings)

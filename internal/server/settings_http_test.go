@@ -2,120 +2,12 @@ package server
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os/exec"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/longkeyy/go-datax/internal/execution"
-	"github.com/longkeyy/go-datax/internal/notify"
 )
-
-func TestNotificationSettingsAPI(t *testing.T) {
-	handler := newTestHandler(t, map[string]string{
-		"index.html": "<html><body>app-shell</body></html>",
-	})
-	token := loginToken(t, handler, "admin", "secret")
-
-	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/settings/notifications", token, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("get settings status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	var current notify.Config
-	if err := json.Unmarshal(rec.Body.Bytes(), &current); err != nil {
-		t.Fatalf("settings is not JSON: %v", err)
-	}
-	if current.Enabled || current.Type != notify.TypeGeneric || current.TimeoutSeconds != 10 {
-		t.Errorf("default settings = %+v", current)
-	}
-
-	invalid := map[string]any{
-		"enabled":        true,
-		"type":           notify.TypeGeneric,
-		"url":            "ftp://example.com",
-		"events":         []string{notify.EventFailed},
-		"timeoutSeconds": 10,
-	}
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/settings/notifications", token, invalid)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid settings status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
-	}
-
-	webhookBodies := make(chan string, 4)
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		webhookBodies <- string(body)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer webhook.Close()
-
-	valid := map[string]any{
-		"enabled":        true,
-		"type":           notify.TypeGeneric,
-		"url":            webhook.URL,
-		"events":         []string{notify.EventFailed, notify.EventRecovered},
-		"timeoutSeconds": 5,
-	}
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/settings/notifications", token, valid)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update settings status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	var saved notify.Config
-	if err := json.Unmarshal(rec.Body.Bytes(), &saved); err != nil {
-		t.Fatalf("updated settings is not JSON: %v", err)
-	}
-	if !saved.Enabled || saved.URL != webhook.URL || saved.TimeoutSeconds != 5 {
-		t.Errorf("saved settings = %+v", saved)
-	}
-	if len(saved.Events) != 2 || saved.Events[0] != notify.EventFailed || saved.Events[1] != notify.EventRecovered {
-		t.Errorf("saved events = %v", saved.Events)
-	}
-
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/settings/notifications", token, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reload settings status = %d", rec.Code)
-	}
-	var reloaded notify.Config
-	if err := json.Unmarshal(rec.Body.Bytes(), &reloaded); err != nil {
-		t.Fatalf("reloaded settings is not JSON: %v", err)
-	}
-	if reloaded.URL != webhook.URL || !reloaded.Enabled {
-		t.Errorf("reloaded settings = %+v", reloaded)
-	}
-
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/settings/notifications/test", token, valid)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test notification status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	select {
-	case body := <-webhookBodies:
-		if !strings.Contains(body, `"event":"test"`) {
-			t.Errorf("test webhook body = %s", body)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("test webhook did not receive a request")
-	}
-
-	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("boom"))
-	}))
-	defer failing.Close()
-	failingConfig := map[string]any{
-		"enabled":        true,
-		"type":           notify.TypeGeneric,
-		"url":            failing.URL,
-		"events":         []string{notify.EventFailed},
-		"timeoutSeconds": 5,
-	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/settings/notifications/test", token, failingConfig)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("failing test status = %d, want 502 (body=%s)", rec.Code, rec.Body.String())
-	}
-}
 
 func TestAccountSettings(t *testing.T) {
 	handler := newTestHandler(t, map[string]string{
@@ -142,8 +34,8 @@ func TestAccountSettings(t *testing.T) {
 		"currentPassword": "wrong",
 		"newPassword":     "newsecret123",
 	})
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("wrong password status = %d, want 400", rec.Code)
 	}
 
 	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/settings/account", token, map[string]string{

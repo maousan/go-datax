@@ -29,130 +29,106 @@ func sampleRun(status string) store.JobRun {
 	}
 }
 
-func captureWebhook(t *testing.T, status int, response string) (*httptest.Server, <-chan string) {
-	t.Helper()
-
-	bodies := make(chan string, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var b strings.Builder
-		buf := make([]byte, 4096)
-		for {
-			n, err := r.Body.Read(buf)
-			b.Write(buf[:n])
-			if err != nil {
-				break
-			}
-		}
-		bodies <- b.String()
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(response))
-	}))
-	t.Cleanup(server.Close)
-	return server, bodies
-}
-
-func waitBody(t *testing.T, bodies <-chan string) string {
-	t.Helper()
-	select {
-	case body := <-bodies:
-		return body
-	case <-time.After(2 * time.Second):
-		t.Fatal("webhook did not receive a request")
-		return ""
-	}
-}
-
-func requireNoBody(t *testing.T, bodies <-chan string) {
-	t.Helper()
-	select {
-	case body := <-bodies:
-		t.Fatalf("unexpected webhook request: %s", body)
-	case <-time.After(300 * time.Millisecond):
-	}
-}
-
-func TestConfigValidate(t *testing.T) {
+func TestEventFor(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     Config
-		wantErr bool
+		name      string
+		run       store.JobRun
+		willRetry bool
+		want      string
 	}{
 		{
-			name: "disabled without url is allowed",
-			cfg:  Config{Enabled: false, Type: TypeGeneric, TimeoutSeconds: 10, Events: []string{EventFailed}},
+			name: "failed without retry",
+			run:  sampleRun(store.RunStatusFailed),
+			want: EventFailed,
 		},
 		{
-			name:    "enabled without url",
-			cfg:     Config{Enabled: true, Type: TypeGeneric, TimeoutSeconds: 10, Events: []string{EventFailed}},
-			wantErr: true,
+			name:      "failed with scheduled retry",
+			run:       sampleRun(store.RunStatusFailed),
+			willRetry: true,
+			want:      "",
 		},
 		{
-			name:    "invalid url scheme",
-			cfg:     Config{Enabled: true, Type: TypeGeneric, URL: "ftp://example.com", TimeoutSeconds: 10, Events: []string{EventFailed}},
-			wantErr: true,
+			name: "canceled",
+			run:  sampleRun(store.RunStatusCanceled),
+			want: EventCanceled,
 		},
 		{
-			name:    "invalid type",
-			cfg:     Config{Enabled: true, Type: "sms", URL: "https://example.com", TimeoutSeconds: 10, Events: []string{EventFailed}},
-			wantErr: true,
+			name: "succeeded",
+			run:  sampleRun(store.RunStatusSucceeded),
+			want: EventSucceeded,
 		},
 		{
-			name:    "enabled without events",
-			cfg:     Config{Enabled: true, Type: TypeGeneric, URL: "https://example.com", TimeoutSeconds: 10, Events: []string{}},
-			wantErr: true,
+			name: "recovered by retry",
+			run: func() store.JobRun {
+				run := sampleRun(store.RunStatusSucceeded)
+				run.Trigger = store.RunTriggerRetry
+				run.RetryAttempt = 1
+				return run
+			}(),
+			want: EventRecovered,
 		},
 		{
-			name:    "timeout too large",
-			cfg:     Config{Enabled: true, Type: TypeGeneric, URL: "https://example.com", TimeoutSeconds: 61, Events: []string{EventFailed}},
-			wantErr: true,
+			name: "running",
+			run:  sampleRun(store.RunStatusRunning),
+			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			if got := EventFor(tt.run, tt.willRetry); got != tt.want {
+				t.Fatalf("EventFor() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestNotifyFailedGeneric(t *testing.T) {
-	server, bodies := captureWebhook(t, http.StatusOK, `{"ok":true}`)
-
-	notifier := New(nil)
-	if err := notifier.Update(Config{
-		Enabled:        true,
-		Type:           TypeGeneric,
-		URL:            server.URL,
-		Events:         []string{EventFailed},
-		TimeoutSeconds: 5,
-	}); err != nil {
-		t.Fatalf("Update() failed: %v", err)
+func TestFormatRunText(t *testing.T) {
+	text := FormatRunText(EventFailed, sampleRun(store.RunStatusFailed))
+	for _, want := range []string{
+		"【go-datax】任务失败",
+		"任务：nightly-sync",
+		"运行：#42 · 手动触发",
+		"退出码：3",
+		"错误：boom at line 1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FormatRunText() = %q, want it to contain %q", text, want)
+		}
 	}
 
-	notifier.Notify(sampleRun(store.RunStatusFailed), false)
+	run := sampleRun(store.RunStatusSucceeded)
+	run.Trigger = store.RunTriggerRetry
+	run.RetryAttempt = 2
+	text = FormatRunText(EventRecovered, run)
+	if !strings.Contains(text, "任务已恢复") || !strings.Contains(text, "自动重试 #2") {
+		t.Errorf("recovered text = %q", text)
+	}
+}
 
+func TestRunPayload(t *testing.T) {
 	var payload struct {
 		Event           string  `json:"event"`
 		Status          string  `json:"status"`
 		JobID           int64   `json:"jobId"`
 		JobName         string  `json:"jobName"`
 		RunID           int64   `json:"runId"`
-		RetryAttempt    int     `json:"retryAttempt"`
 		DurationSeconds float64 `json:"durationSeconds"`
 		ExitCode        *int    `json:"exitCode"`
 		ErrorSummary    string  `json:"errorSummary"`
 	}
-	if err := json.Unmarshal([]byte(waitBody(t, bodies)), &payload); err != nil {
+	data, err := RunPayload(EventFailed, sampleRun(store.RunStatusFailed))
+	if err != nil {
+		t.Fatalf("RunPayload() failed: %v", err)
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatalf("payload is not JSON: %v", err)
 	}
 	if payload.Event != EventFailed || payload.Status != store.RunStatusFailed {
-		t.Errorf("event/status = %q/%q, want failed/failed", payload.Event, payload.Status)
+		t.Errorf("event/status = %q/%q", payload.Event, payload.Status)
 	}
 	if payload.JobID != 7 || payload.JobName != "nightly-sync" || payload.RunID != 42 {
-		t.Errorf("payload identity = %+v", payload)
+		t.Errorf("identity = %+v", payload)
 	}
 	if payload.DurationSeconds != 90 {
 		t.Errorf("duration = %v, want 90", payload.DurationSeconds)
@@ -165,61 +141,7 @@ func TestNotifyFailedGeneric(t *testing.T) {
 	}
 }
 
-func TestNotifyEventFiltering(t *testing.T) {
-	server, bodies := captureWebhook(t, http.StatusOK, "ok")
-
-	notifier := New(nil)
-	if err := notifier.Update(Config{
-		Enabled:        true,
-		Type:           TypeSlack,
-		URL:            server.URL,
-		Events:         []string{EventFailed},
-		TimeoutSeconds: 5,
-	}); err != nil {
-		t.Fatalf("Update() failed: %v", err)
-	}
-
-	// 成功事件未订阅。
-	notifier.Notify(sampleRun(store.RunStatusSucceeded), false)
-	requireNoBody(t, bodies)
-
-	// 失败但会自动重试，不发送。
-	notifier.Notify(sampleRun(store.RunStatusFailed), true)
-	requireNoBody(t, bodies)
-}
-
-func TestNotifyRecovered(t *testing.T) {
-	server, bodies := captureWebhook(t, http.StatusOK, "ok")
-
-	notifier := New(nil)
-	if err := notifier.Update(Config{
-		Enabled:        true,
-		Type:           TypeSlack,
-		URL:            server.URL,
-		Events:         []string{EventRecovered},
-		TimeoutSeconds: 5,
-	}); err != nil {
-		t.Fatalf("Update() failed: %v", err)
-	}
-
-	run := sampleRun(store.RunStatusSucceeded)
-	run.Trigger = store.RunTriggerRetry
-	run.RetryAttempt = 1
-	notifier.Notify(run, false)
-
-	var payload struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal([]byte(waitBody(t, bodies)), &payload); err != nil {
-		t.Fatalf("payload is not JSON: %v", err)
-	}
-	if !strings.Contains(payload.Text, "任务已恢复") || !strings.Contains(payload.Text, "自动重试 #1") {
-		t.Errorf("slack text = %q", payload.Text)
-	}
-}
-
-func TestBuildBodyTypes(t *testing.T) {
-	run := sampleRun(store.RunStatusFailed)
+func TestTextPayloadTypes(t *testing.T) {
 	tests := []struct {
 		typ      string
 		wantKeys []string
@@ -232,9 +154,9 @@ func TestBuildBodyTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.typ, func(t *testing.T) {
-			body, err := buildBody(Config{Type: tt.typ}, EventFailed, run)
+			body, err := TextPayload(tt.typ, FormatRunText(EventFailed, sampleRun(store.RunStatusFailed)))
 			if err != nil {
-				t.Fatalf("buildBody() failed: %v", err)
+				t.Fatalf("TextPayload() failed: %v", err)
 			}
 			text := string(body)
 			for _, key := range tt.wantKeys {
@@ -247,46 +169,54 @@ func TestBuildBodyTypes(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestSendTest(t *testing.T) {
-	server, bodies := captureWebhook(t, http.StatusOK, `{"errcode":0}`)
-
-	notifier := New(nil)
-	if err := notifier.SendTest(Config{
-		Type:           TypeDingTalk,
-		URL:            server.URL,
-		TimeoutSeconds: 5,
-	}); err != nil {
-		t.Fatalf("SendTest() failed: %v", err)
-	}
-
-	body := waitBody(t, bodies)
-	if !strings.Contains(body, "通知测试") {
-		t.Errorf("test body = %s", body)
+	if _, err := TextPayload("sms", "hello"); err == nil {
+		t.Fatal("TextPayload() error = nil, want unsupported type error")
 	}
 }
 
-func TestSendTestFailure(t *testing.T) {
-	server, _ := captureWebhook(t, http.StatusInternalServerError, "boom")
+func TestPost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
+		}
+		_, _ = w.Write([]byte(`{"errcode":0}`))
+	}))
+	defer server.Close()
 
-	notifier := New(nil)
-	err := notifier.SendTest(Config{
-		Type:           TypeGeneric,
-		URL:            server.URL,
-		TimeoutSeconds: 5,
-	})
+	if err := Post(server.URL, 5*time.Second, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("Post() failed: %v", err)
+	}
+}
+
+func TestPostFailure(t *testing.T) {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer failing.Close()
+
+	err := Post(failing.URL, 5*time.Second, []byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
-		t.Fatalf("SendTest() error = %v, want HTTP 500", err)
+		t.Fatalf("Post() error = %v, want HTTP 500", err)
 	}
 
-	server2, _ := captureWebhook(t, http.StatusOK, `{"errcode":310000,"errmsg":"invalid token"}`)
-	err = notifier.SendTest(Config{
-		Type:           TypeDingTalk,
-		URL:            server2.URL,
-		TimeoutSeconds: 5,
-	})
+	invalid := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"errcode":310000,"errmsg":"invalid token"}`))
+	}))
+	defer invalid.Close()
+
+	err = Post(invalid.URL, 5*time.Second, []byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "invalid token") {
-		t.Fatalf("SendTest() error = %v, want webhook error message", err)
+		t.Fatalf("Post() error = %v, want webhook error message", err)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := TruncateRunes("你好世界", 2); got != "你好..." {
+		t.Errorf("TruncateRunes() = %q, want 你好...", got)
+	}
+	if got := TruncateRunes("ok", 10); got != "ok" {
+		t.Errorf("TruncateRunes() = %q, want ok", got)
 	}
 }

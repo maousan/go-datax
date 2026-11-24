@@ -6,44 +6,11 @@ import (
 	"net/http"
 
 	"github.com/longkeyy/go-datax/internal/execution"
-	"github.com/longkeyy/go-datax/internal/notify"
 )
 
 const runtimeSettingKey = "runtime"
 
 const megabyte = int64(1024 * 1024)
-
-func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.notifier.Config())
-}
-
-func (s *Server) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
-	var cfg notify.Config
-	if err := decodeJSON(w, r, &cfg); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
-		return
-	}
-	if err := s.notifier.Update(cfg); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_settings", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, s.notifier.Config())
-}
-
-func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) {
-	cfg := s.notifier.Config()
-	if r.ContentLength != 0 {
-		if err := decodeJSON(w, r, &cfg); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
-			return
-		}
-	}
-	if err := s.notifier.SendTest(cfg); err != nil {
-		writeError(w, http.StatusBadGateway, "notification_failed", "测试通知发送失败："+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
 
 func (s *Server) handleGetRuntimeSettings(w http.ResponseWriter, r *http.Request) {
 	if s.executor != nil {
