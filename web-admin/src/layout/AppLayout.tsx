@@ -17,7 +17,7 @@ const Content = Layout.Content
 const MenuItem = Menu.Item
 const SubMenu = Menu.SubMenu
 
-function renderMenuRoutes(routes: MenuRoute[]) {
+function renderMenuRoutes(routes: MenuRoute[], level = 1, collapsed = false) {
   return routes.map((route) => {
     const Icon = route.icon
     if (route.children?.length) {
@@ -30,7 +30,7 @@ function renderMenuRoutes(routes: MenuRoute[]) {
             </>
           }
         >
-          {renderMenuRoutes(route.children)}
+          {renderMenuRoutes(route.children, level + 1, collapsed)}
         </SubMenu>
       )
     }
@@ -39,6 +39,10 @@ function renderMenuRoutes(routes: MenuRoute[]) {
         {Icon ? (
           <>
             <Icon className={styles.icon} /> {route.name}
+          </>
+        ) : level > 1 && !collapsed ? (
+          <>
+            <span className={styles['menu-icon-placeholder']} /> {route.name}
           </>
         ) : (
           route.name
@@ -80,12 +84,13 @@ export default function AppLayout() {
           <div className={styles['menu-wrapper']}>
             <Menu
               collapse={collapsed}
+              levelIndent={0}
               selectedKeys={[selectedMenuKey(location.pathname)]}
               openKeys={visibleOpenKeys}
               onClickMenuItem={(key) => navigate(key)}
               onClickSubMenu={(_, keys) => setOpenKeys(keys)}
             >
-              {renderMenuRoutes(menuRoutes)}
+              {renderMenuRoutes(menuRoutes, 1, collapsed)}
             </Menu>
           </div>
           <div className={styles['collapse-btn']} onClick={() => setCollapsed(!collapsed)}>
