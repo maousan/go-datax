@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Descriptions,
   Form,
   Grid,
   Input,
@@ -25,14 +26,14 @@ import {
   IconExport,
   IconPlayArrow,
   IconPlus,
-  IconRefresh,
   IconSearch,
   IconUpload,
 } from '@arco-design/web-react/icon'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import { useDataSources } from '../../api/dataSources'
+import { useQueryTemplates } from '../../api/queryTemplates'
 import {
   exportSyncJob,
   useCreateSyncJob,
@@ -54,6 +55,7 @@ import { downloadJSON, formatTime } from '../../utils/format'
 interface JobFormValues {
   name: string
   authoringMode: AuthoringMode
+  readerTemplateId?: number
   readerDataSourceId?: number
   readerTable?: string
   readerColumns?: string
@@ -100,6 +102,8 @@ export default function SyncJobsPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const query = searchParams.get('q') ?? ''
+  const [searchInput, setSearchInput] = useState(query)
+  const searchTimer = useRef<number | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(searchParams.get('action') === 'create')
   const [editing, setEditing] = useState<SyncJob | null>(null)
   const [mode, setMode] = useState<AuthoringMode>('form')
@@ -115,11 +119,12 @@ export default function SyncJobsPage() {
   const [importError, setImportError] = useState('')
 
   const [form] = Form.useForm<JobFormValues>()
-  const [searchForm] = Form.useForm<{ name?: string }>()
   const writerDataSourceId = Form.useWatch('writerDataSourceId', form)
   const writerWriteMode = Form.useWatch('writerWriteMode', form)
+  const readerTemplateId = Form.useWatch('readerTemplateId', form)
   const jobsQuery = useSyncJobs(query)
   const dataSourcesQuery = useDataSources('')
+  const templatesQuery = useQueryTemplates('')
   const createMutation = useCreateSyncJob()
   const updateMutation = useUpdateSyncJob()
   const deleteMutation = useDeleteSyncJob()
@@ -131,6 +136,17 @@ export default function SyncJobsPage() {
     value: item.id,
     label: `${item.name}（${item.type}）`,
   }))
+  const templateOptions = (templatesQuery.data ?? []).map((template) => ({
+    value: template.id,
+    label: template.sql
+      ? `${template.name}（SQL 数据集）`
+      : `${template.name}（${template.table}）`,
+  }))
+  const selectedReaderTemplate = (templatesQuery.data ?? []).find(
+    (template) => template.id === readerTemplateId,
+  )
+  const dataSourceName = (id: number) =>
+    dataSourcesQuery.data?.find((item) => item.id === id)?.name ?? `#${id}`
   const writerDataSource = (dataSourcesQuery.data ?? []).find(
     (item) => item.id === writerDataSourceId,
   )
@@ -139,15 +155,35 @@ export default function SyncJobsPage() {
   const showOracleUpdateKeys =
     writerType === 'oracle' && (writerWriteMode ?? '').toLowerCase() === 'update'
 
-  const handleSearch = () => {
-    const name = (searchForm.getFieldValue('name') ?? '').trim()
-    navigate(name ? `/sync-jobs?q=${encodeURIComponent(name)}` : '/sync-jobs')
+  const navigateToSearch = (value: string) => {
+    const keyword = value.trim()
+    navigate(keyword ? `/sync-jobs?q=${encodeURIComponent(keyword)}` : '/sync-jobs', {
+      replace: true,
+    })
   }
 
-  const handleReset = () => {
-    searchForm.resetFields()
-    navigate('/sync-jobs')
+  const applySearch = () => {
+    if (searchTimer.current !== undefined) window.clearTimeout(searchTimer.current)
+    navigateToSearch(searchInput)
   }
+
+  const handleSearchChange = (value: string) => {
+    setSearchInput(value)
+    if (searchTimer.current !== undefined) window.clearTimeout(searchTimer.current)
+
+    if (!value.trim()) {
+      navigateToSearch('')
+      return
+    }
+    searchTimer.current = window.setTimeout(() => navigateToSearch(value), 300)
+  }
+
+  useEffect(
+    () => () => {
+      if (searchTimer.current !== undefined) window.clearTimeout(searchTimer.current)
+    },
+    [],
+  )
 
   const openCreate = () => {
     setEditing(null)
@@ -157,6 +193,7 @@ export default function SyncJobsPage() {
     form.resetFields()
     form.setFieldsValue({
       authoringMode: 'form',
+      readerTemplateId: 0,
       writerWriteMode: 'insert',
       channel: 1,
       errorLimitRecord: 0,
@@ -182,6 +219,7 @@ export default function SyncJobsPage() {
         form.setFieldsValue({
           name: job.name,
           authoringMode: 'form',
+          readerTemplateId: job.form.reader.templateId ?? 0,
           readerDataSourceId: job.form.reader.dataSourceId,
           readerTable: job.form.reader.table,
           readerColumns: job.form.reader.column.join(', '),
@@ -262,7 +300,15 @@ export default function SyncJobsPage() {
           retryIntervalSeconds: values.retryIntervalSeconds ?? 60,
         }
       } else {
-        const readerColumns = splitColumns(values.readerColumns)
+        const readerTemplateId = values.readerTemplateId ?? 0
+        if (readerTemplateId > 0 && !selectedReaderTemplate) {
+          setFormError('数据集不存在，请重新选择')
+          return
+        }
+        const readerColumns =
+          readerTemplateId > 0
+            ? (selectedReaderTemplate?.columns ?? [])
+            : splitColumns(values.readerColumns)
         const writerColumns = splitColumns(values.writerColumns)
         if (readerColumns.length !== writerColumns.length) {
           setFormError('读取列与写入列数量必须一致')
@@ -301,13 +347,16 @@ export default function SyncJobsPage() {
           name: values.name,
           authoringMode: 'form',
           form: {
-            reader: {
-              dataSourceId: values.readerDataSourceId ?? 0,
-              table: values.readerTable ?? '',
-              column: readerColumns,
-              where: values.readerWhere?.trim() || undefined,
-              splitPk: values.readerSplitPk?.trim() || undefined,
-            },
+            reader:
+              readerTemplateId > 0
+                ? { dataSourceId: 0, templateId: readerTemplateId, table: '', column: [] }
+                : {
+                    dataSourceId: values.readerDataSourceId ?? 0,
+                    table: values.readerTable ?? '',
+                    column: readerColumns,
+                    where: values.readerWhere?.trim() || undefined,
+                    splitPk: values.readerSplitPk?.trim() || undefined,
+                  },
             writer: {
               dataSourceId: values.writerDataSourceId ?? 0,
               table: values.writerTable ?? '',
@@ -444,6 +493,7 @@ export default function SyncJobsPage() {
     {
       title: '操作',
       width: 220,
+      fixed: 'right',
       render: (_, job) => (
         <Space size={2}>
           <Tooltip content="运行">
@@ -492,49 +542,30 @@ export default function SyncJobsPage() {
 
   return (
     <Card>
-      <Typography.Title heading={6}>同步任务</Typography.Title>
+      <Typography.Title heading={6}>datax任务</Typography.Title>
 
-      <div className={listStyles['search-form-wrapper']}>
-        <Form
-          key={query}
-          form={searchForm}
-          initialValues={{ name: query }}
-          className={listStyles['search-form']}
-          labelAlign="left"
-          labelCol={{ span: 6 }}
-          wrapperCol={{ span: 18 }}
-        >
-          <Grid.Row gutter={24}>
-            <Grid.Col span={8}>
-              <Form.Item label="名称" field="name">
-                <Input
-                  allowClear
-                  placeholder="请输入任务名称"
-                  onPressEnter={handleSearch}
-                />
-              </Form.Item>
-            </Grid.Col>
-          </Grid.Row>
-        </Form>
-        <div className={listStyles['right-button']}>
-          <Button type="primary" icon={<IconSearch />} onClick={handleSearch}>
-            查询
-          </Button>
-          <Button icon={<IconRefresh />} onClick={handleReset}>
-            重置
-          </Button>
+      <div className={listStyles.toolbar}>
+        <Input
+          allowClear
+          aria-label="任务名称"
+          className={listStyles['search-input']}
+          prefix={<IconSearch />}
+          placeholder="请输入任务名称"
+          value={searchInput}
+          onChange={handleSearchChange}
+          onPressEnter={applySearch}
+        />
+
+        <div className={listStyles.actions}>
+          <Space>
+            <Button icon={<IconUpload />} onClick={() => setImportOpen(true)}>
+              导入 JSON
+            </Button>
+            <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
+              新建任务
+            </Button>
+          </Space>
         </div>
-      </div>
-
-      <div className={listStyles['button-group']}>
-        <Space>
-          <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
-            新建任务
-          </Button>
-          <Button icon={<IconUpload />} onClick={() => setImportOpen(true)}>
-            导入 JSON
-          </Button>
-        </Space>
       </div>
 
       {pageError ? (
@@ -554,11 +585,12 @@ export default function SyncJobsPage() {
         data={jobsQuery.data ?? []}
         loading={jobsQuery.isLoading}
         pagination={false}
-        noDataElement={<span>还没有同步任务</span>}
+        scroll={{ x: 1240 }}
+        noDataElement={<span>还没有 datax任务</span>}
       />
 
       <Modal
-        title={editing ? '编辑同步任务' : '新建同步任务'}
+        title={editing ? '编辑 datax任务' : '新建 datax任务'}
         visible={modalOpen}
         okText="保存"
         cancelText="取消"
@@ -575,6 +607,7 @@ export default function SyncJobsPage() {
           layout="vertical"
           initialValues={{
             authoringMode: 'form',
+            readerTemplateId: 0,
             writerWriteMode: 'insert',
             channel: 1,
             errorLimitRecord: 0,
@@ -615,7 +648,7 @@ export default function SyncJobsPage() {
             <>
               <Alert
                 type="info"
-                content="当前引擎仅执行 job.content[0]，且 transformer 尚未实现；保存时会校验并拒绝这类配置。"
+                content="当前引擎仅执行 job.content[0]；transformer 已支持 dx_substr、dx_pad、dx_replace、dx_filter、dx_digest 与自定义脚本 dx_script，保存时会校验配置。"
                 style={{ marginBottom: 12 }}
               />
               <Form.Item label="DataX 配置">
@@ -625,45 +658,123 @@ export default function SyncJobsPage() {
           ) : (
             <>
               <Card title="读取端" style={{ marginBottom: 16 }}>
-                <Grid.Row gutter={16}>
-                  <Grid.Col span={12}>
-                    <Form.Item
-                      field="readerDataSourceId"
-                      label="数据源"
-                      rules={[{ required: true, message: '请选择读取数据源' }]}
-                    >
-                      <Select options={dataSourceOptions} placeholder="选择数据源" />
-                    </Form.Item>
-                  </Grid.Col>
-                  <Grid.Col span={12}>
-                    <Form.Item
-                      field="readerTable"
-                      label="表名"
-                      rules={[{ required: true, message: '请输入表名' }]}
-                    >
-                      <Input placeholder="例如：orders" />
-                    </Form.Item>
-                  </Grid.Col>
-                </Grid.Row>
                 <Form.Item
-                  field="readerColumns"
-                  label="列（逗号或换行分隔）"
-                  rules={[{ required: true, message: '请输入读取列' }]}
+                  field="readerTemplateId"
+                  label="读取数据集"
+                  extra="选择数据集后，读取端由数据集统一维护；不选则使用下方自定义读取"
                 >
-                  <Input.TextArea rows={2} placeholder="id, name, email" />
+                  <Select
+                    options={[{ value: 0, label: '自定义读取' }, ...templateOptions]}
+                    placeholder="自定义读取"
+                  />
                 </Form.Item>
-                <Grid.Row gutter={16}>
-                  <Grid.Col span={12}>
-                    <Form.Item field="readerWhere" label="WHERE 条件">
-                      <Input placeholder="可选，例如 status = 'active'" />
+
+                {selectedReaderTemplate ? (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      background: 'var(--color-fill-2)',
+                    }}
+                  >
+                    <Descriptions
+                      column={2}
+                      data={
+                        selectedReaderTemplate.sql
+                          ? [
+                              { label: '数据集', value: selectedReaderTemplate.name },
+                              {
+                                label: '数据源',
+                                value: dataSourceName(selectedReaderTemplate.dataSourceId),
+                              },
+                              { label: '读取模式', value: 'SQL 单通道（querySql）' },
+                              {
+                                label: '列',
+                                value: selectedReaderTemplate.columns.join(', '),
+                              },
+                            ]
+                          : [
+                              { label: '数据集', value: selectedReaderTemplate.name },
+                              {
+                                label: '数据源',
+                                value: dataSourceName(selectedReaderTemplate.dataSourceId),
+                              },
+                              { label: '表', value: selectedReaderTemplate.table },
+                              {
+                                label: '列',
+                                value: selectedReaderTemplate.columns.join(', '),
+                              },
+                              { label: 'WHERE', value: selectedReaderTemplate.where || '-' },
+                              {
+                                label: '分片字段',
+                                value: selectedReaderTemplate.splitPk || '-',
+                              },
+                            ]
+                      }
+                    />
+                    {selectedReaderTemplate.sql ? (
+                      <pre
+                        style={{
+                          margin: '0 0 8px',
+                          padding: 10,
+                          borderRadius: 6,
+                          background: 'var(--color-bg-2)',
+                          fontSize: 12,
+                          lineHeight: 1.6,
+                          maxHeight: 160,
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {selectedReaderTemplate.sql}
+                      </pre>
+                    ) : null}
+                    <Link onClick={() => navigate('/datasets')}>管理数据集</Link>
+                  </div>
+                ) : (
+                  <>
+                    <Grid.Row gutter={16}>
+                      <Grid.Col span={12}>
+                        <Form.Item
+                          field="readerDataSourceId"
+                          label="数据源"
+                          rules={[{ required: true, message: '请选择读取数据源' }]}
+                        >
+                          <Select options={dataSourceOptions} placeholder="选择数据源" />
+                        </Form.Item>
+                      </Grid.Col>
+                      <Grid.Col span={12}>
+                        <Form.Item
+                          field="readerTable"
+                          label="表名"
+                          rules={[{ required: true, message: '请输入表名' }]}
+                        >
+                          <Input placeholder="例如：orders" />
+                        </Form.Item>
+                      </Grid.Col>
+                    </Grid.Row>
+                    <Form.Item
+                      field="readerColumns"
+                      label="列（逗号或换行分隔）"
+                      rules={[{ required: true, message: '请输入读取列' }]}
+                    >
+                      <Input.TextArea rows={2} placeholder="id, name, email" />
                     </Form.Item>
-                  </Grid.Col>
-                  <Grid.Col span={12}>
-                    <Form.Item field="readerSplitPk" label="分片字段">
-                      <Input placeholder="可选，例如 id" />
-                    </Form.Item>
-                  </Grid.Col>
-                </Grid.Row>
+                    <Grid.Row gutter={16}>
+                      <Grid.Col span={12}>
+                        <Form.Item field="readerWhere" label="WHERE 条件">
+                          <Input placeholder="可选，例如 status = 'active'" />
+                        </Form.Item>
+                      </Grid.Col>
+                      <Grid.Col span={12}>
+                        <Form.Item field="readerSplitPk" label="分片字段">
+                          <Input placeholder="可选，例如 id" />
+                        </Form.Item>
+                      </Grid.Col>
+                    </Grid.Row>
+                  </>
+                )}
               </Card>
 
               <Card title="写入端" style={{ marginBottom: 16 }}>
@@ -726,8 +837,8 @@ export default function SyncJobsPage() {
 
               <Card title="运行设置">
                 <Alert
-                  type="warning"
-                  content="错误记录/错误率上限当前引擎尚未实现，配置会保存但不会生效。"
+                  type="info"
+                  content="错误记录/错误率上限当前对 Transformer 产生的脏数据生效；Reader/Writer 自身的失败暂未纳入该限制。"
                   style={{ marginBottom: 12 }}
                 />
                 <Grid.Row gutter={16}>

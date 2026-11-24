@@ -17,6 +17,7 @@
     "@tanstack/react-query": "^5.108.3",
     "classnames": "^2.5.1",
     "dayjs": "^1.11.23",
+    "dockview-react": "^8.9.1",
     "monaco-editor": "^0.57.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

@@ -5,18 +5,33 @@ interface SqlEditorProps {
   value: string
   onChange: (value: string) => void
   height?: string
+  theme?: 'light' | 'dark'
 }
 
-export default function SqlEditor({ value, onChange, height = '200px' }: SqlEditorProps) {
+export default function SqlEditor({
+  value,
+  onChange,
+  height = '200px',
+  theme = 'light',
+}: SqlEditorProps) {
   useEffect(() => {
     void import('../monaco')
   }, [])
 
   return (
-    <div style={{ border: '1px solid var(--color-border-2)', borderRadius: 6, overflow: 'hidden' }}>
+    <div
+      style={{
+        height: height === '100%' ? '100%' : undefined,
+        border: '1px solid var(--color-border-2)',
+        borderRadius: 6,
+        overflow: 'hidden',
+        boxSizing: height === '100%' ? 'border-box' : undefined,
+      }}
+    >
       <Editor
         height={height}
         language="sql"
+        theme={theme === 'dark' ? 'vs-dark' : 'vs'}
         value={value}
         onChange={(next) => onChange(next ?? '')}
         options={{

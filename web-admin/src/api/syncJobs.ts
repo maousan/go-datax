@@ -6,11 +6,24 @@ export type AuthoringMode = 'form' | 'raw'
 
 export interface FormEndpoint {
   dataSourceId: number
+  templateId?: number
   table: string
   column: string[]
   where?: string
   splitPk?: string
   writeMode?: string
+}
+
+export interface QueryTemplateSummary {
+  id: number
+  name: string
+  description: string
+  dataSourceId: number
+  sql: string
+  table: string
+  columns: string[]
+  where: string
+  splitPk: string
 }
 
 export interface FormJobDefinition {
@@ -29,6 +42,7 @@ export interface SyncJob {
   form?: FormJobDefinition
   raw?: unknown
   summary: string
+  queryTemplate?: QueryTemplateSummary
   retryMax: number
   retryIntervalSeconds: number
   lastRun?: Run
