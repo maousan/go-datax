@@ -23,28 +23,31 @@ const (
 
 // 触发来源。
 const (
-	RunTriggerManual = "manual"
-	RunTriggerRerun  = "rerun"
-	RunTriggerRetry  = "retry"
+	RunTriggerManual   = "manual"
+	RunTriggerRerun    = "rerun"
+	RunTriggerRetry    = "retry"
+	RunTriggerSchedule = "schedule"
 )
 
 // JobRun 是一次同步任务的执行实例。
 type JobRun struct {
-	ID           int64     `gorm:"primaryKey"`
-	SyncJobID    *int64    `gorm:"index"`
-	SyncJobName  string    `gorm:"size:100"`
-	Status       string    `gorm:"size:20;index;not null"`
-	Trigger      string    `gorm:"size:20;not null"`
-	StartedAt    time.Time `gorm:"index"`
-	FinishedAt   *time.Time
-	ExitCode     *int
-	ErrorSummary string `gorm:"size:1000"`
-	SnapshotPath string `gorm:"size:500"`
-	LogPath      string `gorm:"size:500"`
-	LogSize      int64
-	Progress     string `gorm:"size:1000"`
-	RetryAttempt int    `gorm:"not null;default:0"`
-	CreatedAt    time.Time
+	ID              int64     `gorm:"primaryKey"`
+	SyncJobID       *int64    `gorm:"index"`
+	SyncJobName     string    `gorm:"size:100"`
+	CollectTaskID   *int64    `gorm:"index"`
+	CollectTaskName string    `gorm:"size:100"`
+	Status          string    `gorm:"size:20;index;not null"`
+	Trigger         string    `gorm:"size:20;not null"`
+	StartedAt       time.Time `gorm:"index"`
+	FinishedAt      *time.Time
+	ExitCode        *int
+	ErrorSummary    string `gorm:"size:1000"`
+	SnapshotPath    string `gorm:"size:500"`
+	LogPath         string `gorm:"size:500"`
+	LogSize         int64
+	Progress        string `gorm:"size:1000"`
+	RetryAttempt    int    `gorm:"not null;default:0"`
+	CreatedAt       time.Time
 }
 
 // RunProgress 是引擎上报的进度快照，序列化后保存在 JobRun.Progress。
@@ -170,6 +173,45 @@ func (s *Store) LatestRunsForJobs(jobIDs []int64) (map[int64]JobRun, error) {
 		}
 	}
 	return result, nil
+}
+
+// LatestRunsForCollectTasks 批量返回每个采集任务最近一次运行。
+func (s *Store) LatestRunsForCollectTasks(taskIDs []int64) (map[int64]JobRun, error) {
+	result := make(map[int64]JobRun, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+
+	var runs []JobRun
+	err := s.db.Raw(
+		`SELECT * FROM job_runs
+		 WHERE id IN (
+		   SELECT MAX(id) FROM job_runs WHERE collect_task_id IN ? GROUP BY collect_task_id
+		 )`,
+		taskIDs,
+	).Scan(&runs).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range runs {
+		if run.CollectTaskID != nil {
+			result[*run.CollectTaskID] = run
+		}
+	}
+	return result, nil
+}
+
+// LatestRunForCollectTask 返回采集任务最近一次运行。
+func (s *Store) LatestRunForCollectTask(taskID int64) (JobRun, bool, error) {
+	var run JobRun
+	err := s.db.Where("collect_task_id = ?", taskID).Order("id desc").First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return run, false, nil
+	}
+	if err != nil {
+		return run, false, err
+	}
+	return run, true, nil
 }
 
 // RunStats 汇总一个任务在时间窗口内的运行情况。

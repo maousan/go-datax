@@ -16,34 +16,38 @@ import (
 )
 
 type runResponse struct {
-	ID           int64              `json:"id"`
-	SyncJobID    *int64             `json:"syncJobId"`
-	SyncJobName  string             `json:"syncJobName"`
-	Status       string             `json:"status"`
-	Trigger      string             `json:"trigger"`
-	StartedAt    string             `json:"startedAt"`
-	FinishedAt   *string            `json:"finishedAt"`
-	ExitCode     *int               `json:"exitCode"`
-	ErrorSummary string             `json:"errorSummary"`
-	LogSize      int64              `json:"logSize"`
-	Progress     *store.RunProgress `json:"progress,omitempty"`
-	RetryAttempt int                `json:"retryAttempt"`
-	CreatedAt    string             `json:"createdAt"`
+	ID              int64              `json:"id"`
+	SyncJobID       *int64             `json:"syncJobId"`
+	SyncJobName     string             `json:"syncJobName"`
+	CollectTaskID   *int64             `json:"collectTaskId"`
+	CollectTaskName string             `json:"collectTaskName"`
+	Status          string             `json:"status"`
+	Trigger         string             `json:"trigger"`
+	StartedAt       string             `json:"startedAt"`
+	FinishedAt      *string            `json:"finishedAt"`
+	ExitCode        *int               `json:"exitCode"`
+	ErrorSummary    string             `json:"errorSummary"`
+	LogSize         int64              `json:"logSize"`
+	Progress        *store.RunProgress `json:"progress,omitempty"`
+	RetryAttempt    int                `json:"retryAttempt"`
+	CreatedAt       string             `json:"createdAt"`
 }
 
 func toRunResponse(run store.JobRun) runResponse {
 	response := runResponse{
-		ID:           run.ID,
-		SyncJobID:    run.SyncJobID,
-		SyncJobName:  run.SyncJobName,
-		Status:       run.Status,
-		Trigger:      run.Trigger,
-		StartedAt:    run.StartedAt.UTC().Format(time.RFC3339),
-		ExitCode:     run.ExitCode,
-		ErrorSummary: run.ErrorSummary,
-		LogSize:      run.LogSize,
-		RetryAttempt: run.RetryAttempt,
-		CreatedAt:    run.CreatedAt.UTC().Format(time.RFC3339),
+		ID:              run.ID,
+		SyncJobID:       run.SyncJobID,
+		SyncJobName:     run.SyncJobName,
+		CollectTaskID:   run.CollectTaskID,
+		CollectTaskName: run.CollectTaskName,
+		Status:          run.Status,
+		Trigger:         run.Trigger,
+		StartedAt:       run.StartedAt.UTC().Format(time.RFC3339),
+		ExitCode:        run.ExitCode,
+		ErrorSummary:    run.ErrorSummary,
+		LogSize:         run.LogSize,
+		RetryAttempt:    run.RetryAttempt,
+		CreatedAt:       run.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if run.FinishedAt != nil {
 		finished := run.FinishedAt.UTC().Format(time.RFC3339)
@@ -76,11 +80,11 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.dataStore.GetSyncJob(id)
 	if errors.Is(err, store.ErrSyncJobNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -142,7 +146,7 @@ func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -451,7 +455,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	syncJobCount, err := s.dataStore.CountSyncJobs()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "统计同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "统计datax任务失败")
 		return
 	}
 	statusCounts, err := s.dataStore.RunStatusCountsSince(since)

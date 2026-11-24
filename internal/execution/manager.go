@@ -50,10 +50,23 @@ type Event struct {
 	Progress   *store.RunProgress `json:"progress,omitempty"`
 }
 
+// RunOptions 描述一次运行的来源与策略。
+type RunOptions struct {
+	Trigger         string
+	RetryMax        int
+	RetryInterval   time.Duration
+	Timeout         time.Duration
+	CollectTaskID   *int64
+	CollectTaskName string
+}
+
 type runningRun struct {
 	run      store.JobRun
 	cmd      *exec.Cmd
 	canceled bool
+	timedOut bool
+	finished bool
+	options  RunOptions
 }
 
 // Manager 负责子进程生命周期、日志与状态流转。
@@ -147,6 +160,31 @@ func (m *Manager) UpdateRuntime(settings RuntimeSettings) {
 	m.prune()
 }
 
+// RunningRunIDForJob 返回任务定义当前正在运行的实例 id。
+func (m *Manager) RunningRunIDForJob(jobID int64) (int64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, entry := range m.running {
+		if entry.run.SyncJobID != nil && *entry.run.SyncJobID == jobID {
+			return entry.run.ID, true
+		}
+	}
+	return 0, false
+}
+
+// WaitForJobIdle 等待任务定义上的运行结束，超时返回 false。
+func (m *Manager) WaitForJobIdle(jobID int64, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, running := m.RunningRunIDForJob(jobID); !running {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_, running := m.RunningRunIDForJob(jobID)
+	return !running
+}
+
 // SetOnFinish 设置运行结束后的回调。willRetry 表示失败后是否会安排自动重试。
 func (m *Manager) SetOnFinish(fn func(store.JobRun, bool)) {
 	m.mu.Lock()
@@ -165,15 +203,31 @@ func (m *Manager) notifyFinish(run store.JobRun, willRetry bool) {
 
 // Start 启动一次手动运行。config 是已展开的 DataX 配置。
 func (m *Manager) Start(job store.SyncJob, config map[string]any) (store.JobRun, error) {
-	return m.start(job, config, store.RunTriggerManual, 0)
+	return m.start(job, config, RunOptions{
+		Trigger:       store.RunTriggerManual,
+		RetryMax:      job.RetryMax,
+		RetryInterval: time.Duration(job.RetryIntervalSeconds) * time.Second,
+	}, 0)
 }
 
 // Rerun 使用任务当前配置重新执行一次。
 func (m *Manager) Rerun(job store.SyncJob, config map[string]any) (store.JobRun, error) {
-	return m.start(job, config, store.RunTriggerRerun, 0)
+	return m.start(job, config, RunOptions{
+		Trigger:       store.RunTriggerRerun,
+		RetryMax:      job.RetryMax,
+		RetryInterval: time.Duration(job.RetryIntervalSeconds) * time.Second,
+	}, 0)
 }
 
-func (m *Manager) start(job store.SyncJob, config map[string]any, trigger string, retryAttempt int) (store.JobRun, error) {
+// StartScheduled 由采集任务触发一次运行。
+func (m *Manager) StartScheduled(job store.SyncJob, config map[string]any, options RunOptions) (store.JobRun, error) {
+	if options.Trigger == "" {
+		options.Trigger = store.RunTriggerSchedule
+	}
+	return m.start(job, config, options, 0)
+}
+
+func (m *Manager) start(job store.SyncJob, config map[string]any, options RunOptions, retryAttempt int) (store.JobRun, error) {
 	m.mu.Lock()
 	if m.jobLocks[job.ID] {
 		m.mu.Unlock()
@@ -195,12 +249,14 @@ func (m *Manager) start(job store.SyncJob, config map[string]any, trigger string
 	now := time.Now()
 	jobID := job.ID
 	run := store.JobRun{
-		SyncJobID:    &jobID,
-		SyncJobName:  job.Name,
-		Status:       store.RunStatusRunning,
-		Trigger:      trigger,
-		StartedAt:    now,
-		RetryAttempt: retryAttempt,
+		SyncJobID:       &jobID,
+		SyncJobName:     job.Name,
+		CollectTaskID:   options.CollectTaskID,
+		CollectTaskName: options.CollectTaskName,
+		Status:          store.RunStatusRunning,
+		Trigger:         options.Trigger,
+		StartedAt:       now,
+		RetryAttempt:    retryAttempt,
 	}
 	if err := m.store.CreateJobRun(&run); err != nil {
 		releaseLock()
@@ -228,7 +284,7 @@ func (m *Manager) start(job store.SyncJob, config map[string]any, trigger string
 		return run, err
 	}
 
-	entry := &runningRun{run: run}
+	entry := &runningRun{run: run, options: options}
 	m.mu.Lock()
 	m.running[run.ID] = entry
 	m.mu.Unlock()
@@ -250,7 +306,7 @@ func (m *Manager) execute(entry *runningRun, job store.SyncJob, releaseLock func
 	if err != nil {
 		m.finish(entry, 1, fmt.Sprintf("打开日志文件失败: %v", err), false)
 		releaseLock()
-		scheduled := m.maybeScheduleRetry(job, entry.run)
+		scheduled := m.maybeScheduleRetry(job, entry)
 		m.notifyFinish(entry.run, scheduled)
 		return
 	}
@@ -274,7 +330,7 @@ func (m *Manager) execute(entry *runningRun, job store.SyncJob, releaseLock func
 		_ = logFile.Close()
 		m.finish(entry, 1, fmt.Sprintf("启动 datax 进程失败: %v", err), false)
 		releaseLock()
-		scheduled := m.maybeScheduleRetry(job, entry.run)
+		scheduled := m.maybeScheduleRetry(job, entry)
 		m.notifyFinish(entry.run, scheduled)
 		return
 	}
@@ -289,7 +345,28 @@ func (m *Manager) execute(entry *runningRun, job store.SyncJob, releaseLock func
 		_ = killProcessTree(cmd)
 	}
 
+	var timeoutTimer *time.Timer
+	if entry.options.Timeout > 0 {
+		timeoutTimer = time.AfterFunc(entry.options.Timeout, func() {
+			m.mu.Lock()
+			if !entry.finished {
+				entry.timedOut = true
+			}
+			timedOut := entry.timedOut
+			m.mu.Unlock()
+			if timedOut {
+				_ = killProcessTree(cmd)
+			}
+		})
+	}
+
 	waitErr := cmd.Wait()
+	m.mu.Lock()
+	entry.finished = true
+	m.mu.Unlock()
+	if timeoutTimer != nil {
+		timeoutTimer.Stop()
+	}
 	_ = logFile.Close()
 	writer.Close()
 
@@ -318,21 +395,23 @@ func (m *Manager) execute(entry *runningRun, job store.SyncJob, releaseLock func
 
 	m.finish(entry, exitCode, summary, canceled)
 	releaseLock()
-	scheduled := m.maybeScheduleRetry(job, entry.run)
+	scheduled := m.maybeScheduleRetry(job, entry)
 	m.notifyFinish(entry.run, scheduled)
 	m.prune()
 }
 
 // maybeScheduleRetry 在运行失败后按任务策略安排一次自动重试，返回是否已安排。
-func (m *Manager) maybeScheduleRetry(job store.SyncJob, failed store.JobRun) bool {
+func (m *Manager) maybeScheduleRetry(job store.SyncJob, entry *runningRun) bool {
+	failed := entry.run
+	options := entry.options
 	if failed.Status != store.RunStatusFailed {
 		return false
 	}
-	if job.RetryMax <= 0 || failed.RetryAttempt >= job.RetryMax {
+	if options.RetryMax <= 0 || failed.RetryAttempt >= options.RetryMax {
 		return false
 	}
 
-	interval := time.Duration(job.RetryIntervalSeconds) * time.Second
+	interval := options.RetryInterval
 	if interval < 0 {
 		interval = 0
 	}
@@ -342,9 +421,22 @@ func (m *Manager) maybeScheduleRetry(job store.SyncJob, failed store.JobRun) boo
 			time.Sleep(interval)
 		}
 
-		// 延迟期间任务可能被删除，或重试策略被改小。
+		retryOptions := options
+		if options.CollectTaskID != nil {
+			task, err := m.store.GetCollectTask(*options.CollectTaskID)
+			if err != nil || !task.Enabled || task.SyncJobID != job.ID {
+				return
+			}
+			retryOptions.RetryMax = task.RetryMax
+			retryOptions.RetryInterval = time.Duration(task.RetryIntervalSeconds) * time.Second
+			retryOptions.Timeout = time.Duration(task.TimeoutSeconds) * time.Second
+			if retryOptions.RetryMax <= failed.RetryAttempt {
+				return
+			}
+		}
+
 		current, err := m.store.GetSyncJob(job.ID)
-		if err != nil || current.RetryMax <= failed.RetryAttempt {
+		if err != nil {
 			return
 		}
 
@@ -352,7 +444,8 @@ func (m *Manager) maybeScheduleRetry(job store.SyncJob, failed store.JobRun) boo
 		if err != nil {
 			return
 		}
-		_, _ = m.start(current, config, store.RunTriggerRetry, failed.RetryAttempt+1)
+		retryOptions.Trigger = store.RunTriggerRetry
+		_, _ = m.start(current, config, retryOptions, failed.RetryAttempt+1)
 	}()
 	return true
 }
@@ -398,7 +491,17 @@ func (m *Manager) finish(entry *runningRun, exitCode int, summary string, cancel
 		entry.run.LogSize = info.Size()
 	}
 
+	m.mu.Lock()
+	timedOut := entry.timedOut
+	m.mu.Unlock()
+
 	switch {
+	case timedOut:
+		entry.run.Status = store.RunStatusFailed
+		entry.run.ErrorSummary = truncate(
+			fmt.Sprintf("执行超时（%s）", entry.options.Timeout),
+			900,
+		)
 	case canceled:
 		entry.run.Status = store.RunStatusCanceled
 	case exitCode == 0:

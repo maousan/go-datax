@@ -560,12 +560,19 @@ func waitWebhookBody(t *testing.T, bodies <-chan string) string {
 func configureFailureWebhook(t *testing.T, handler http.Handler, token, webhookURL string) {
 	t.Helper()
 
-	rec := authedJSONRequest(t, handler, http.MethodPut, "/api/v1/settings/notifications", token, map[string]any{
+	rec := authedJSONRequest(t, handler, http.MethodPut, "/api/v1/alerts/config", token, map[string]any{
 		"enabled":        true,
-		"type":           "generic",
-		"url":            webhookURL,
-		"events":         []string{"failed"},
 		"timeoutSeconds": 5,
+		"retentionDays":  90,
+		"channels": []map[string]any{
+			{
+				"name":    "test-webhook",
+				"type":    "webhook",
+				"enabled": true,
+				"events":  []string{"failed"},
+				"url":     webhookURL,
+			},
+		},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("configure webhook status = %d, body = %s", rec.Code, rec.Body.String())
