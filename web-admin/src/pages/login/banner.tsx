@@ -5,7 +5,7 @@ import styles from './style/index.module.less'
 const SLIDES = [
   {
     slogan: '开箱即用的数据同步管理台',
-    subSlogan: '统一管理数据源、同步任务与运行记录，覆盖常见 ETL 场景',
+    subSlogan: '统一管理数据源、datax任务与运行记录，覆盖常见 ETL 场景',
   },
   {
     slogan: '支持多种数据源',

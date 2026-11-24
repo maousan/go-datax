@@ -98,6 +98,14 @@
   min-height: 100vh;
   transition: padding-left 0.2s;
   box-sizing: border-box;
+
+  // Arco 给带 Sider 的 Layout 子项设置了 overflow-x: hidden，
+  // 计算后的 overflow-y 会变成 auto，导致内容区出现第二个滚动条。
+  // 这里显式改为横向裁剪（不产生滚动容器）、纵向可见，只保留页面滚动条。
+  :global(.arco-layout-has-sider) > &:global(.arco-layout) {
+    overflow-x: clip;
+    overflow-y: visible;
+  }
 }
 
 .layout-content-wrapper {

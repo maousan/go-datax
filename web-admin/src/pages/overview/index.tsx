@@ -16,6 +16,8 @@ import {
   IconCloseCircle,
   IconFile,
   IconHistory,
+  IconLoading,
+  IconMinusCircle,
   IconPlayArrow,
   IconPlus,
   IconStorage,
@@ -56,6 +58,13 @@ const STATUS_META: Record<Run['status'], { label: string; color: string }> = {
   canceled: { label: '已取消', color: '#86909C' },
 }
 
+const RUN_STATUS_ITEMS: { status: Run['status']; label: string; icon: ReactNode }[] = [
+  { status: 'succeeded', label: '成功', icon: <IconCheckCircle /> },
+  { status: 'failed', label: '失败', icon: <IconCloseCircle /> },
+  { status: 'canceled', label: '已取消', icon: <IconMinusCircle /> },
+  { status: 'running', label: '运行中', icon: <IconLoading /> },
+]
+
 interface StatisticItemProps {
   icon: ReactNode
   title: string
@@ -87,7 +96,7 @@ const SHORTCUTS = [
   { title: '导入任务', path: '/sync-jobs?action=import', icon: <IconUpload /> },
   { title: '运行历史', path: '/runs', icon: <IconHistory /> },
   { title: '数据源管理', path: '/data-sources', icon: <IconStorage /> },
-  { title: '同步任务', path: '/sync-jobs', icon: <IconSync /> },
+  { title: 'datax任务', path: '/sync-jobs', icon: <IconSync /> },
 ]
 
 const DOC_LINKS = [
@@ -195,7 +204,7 @@ export default function OverviewPage() {
             <Col span={8}>
               <StatisticItem
                 icon={<IconSync style={{ ...ICON_STYLE, color: 'rgb(var(--primary-6))' }} />}
-                title="同步任务"
+                title="datax任务"
                 count={data?.syncJobCount ?? 0}
                 unit="个"
                 loading={overview.isLoading}
@@ -340,28 +349,27 @@ export default function OverviewPage() {
           </ResponsiveContainer>
         </Card>
 
+        <Card className={styles['bottom-row']}>
+          <div className={styles['section-header']}>
+            <Typography.Title heading={6} style={{ margin: 0 }}>
+              最近运行
+            </Typography.Title>
+            <Link onClick={() => navigate('/runs')}>查看更多</Link>
+          </div>
+          <Table<Run>
+            rowKey="id"
+            tableLayoutFixed
+            size="small"
+            columns={recentRunColumns}
+            data={recentRuns}
+            loading={overview.isLoading}
+            pagination={false}
+            noDataElement={<span>还没有运行记录</span>}
+          />
+        </Card>
+
         <Row gutter={16} className={styles['bottom-row']}>
-          <Col span={14}>
-            <Card>
-              <div className={styles['section-header']}>
-                <Typography.Title heading={6} style={{ margin: 0 }}>
-                  最近运行
-                </Typography.Title>
-                <Link onClick={() => navigate('/runs')}>查看更多</Link>
-              </div>
-              <Table<Run>
-                rowKey="id"
-                tableLayoutFixed
-                size="small"
-                columns={recentRunColumns}
-                data={recentRuns}
-                loading={overview.isLoading}
-                pagination={false}
-                noDataElement={<span>还没有运行记录</span>}
-              />
-            </Card>
-          </Col>
-          <Col span={10}>
+          <Col span={12}>
             <Card>
               <div className={styles['section-header']}>
                 <Typography.Title heading={6} style={{ margin: 0 }}>
@@ -403,6 +411,42 @@ export default function OverviewPage() {
                   </div>
                 </div>
               )}
+            </Card>
+          </Col>
+          <Col span={12}>
+            <Card>
+              <div className={styles['section-header']}>
+                <Typography.Title heading={6} style={{ margin: 0 }}>
+                  运行结果
+                </Typography.Title>
+                <Typography.Text type="secondary">
+                  近 {data?.windowHours ?? 24} 小时
+                </Typography.Text>
+              </div>
+              <div className={styles['run-counts']}>
+                {RUN_STATUS_ITEMS.map((item) => {
+                  const meta = STATUS_META[item.status]
+                  return (
+                    <div key={item.status} className={styles['run-count']}>
+                      <div
+                        className={styles['run-count-icon']}
+                        style={{ color: meta.color, backgroundColor: `${meta.color}1A` }}
+                      >
+                        {item.icon}
+                      </div>
+                      <div>
+                        <div className={styles['run-count-label']}>{item.label}</div>
+                        <div
+                          className={styles['run-count-value']}
+                          style={{ color: meta.color }}
+                        >
+                          {data?.statusCounts?.[item.status] ?? 0}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </Card>
           </Col>
         </Row>

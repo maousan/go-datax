@@ -42,9 +42,26 @@
 .search-form {
   padding-right: 20px;
 
-  :global(.arco-form-label-item-left) {
+  :global(.arco-form-label-item) {
     > label {
       white-space: nowrap;
     }
   }
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding-bottom: 16px;
+}
+
+.search-input {
+  width: 240px;
+}
+
+.actions {
+  margin-left: auto;
 }
