@@ -44,14 +44,8 @@ import {
 import SqlEditor from '../../components/SqlEditor'
 import useFillHeight from '../../hooks/useFillHeight'
 import styles from './detail.module.less'
-
-const TYPE_LABELS: Record<DataSourceType, string> = {
-  mysql: 'MySQL',
-  postgres: 'PostgreSQL',
-  sqlite: 'SQLite',
-  mssql: 'SQL Server',
-  oracle: 'Oracle',
-}
+import DataSourceTypeIcon from './type-icon'
+import { dataSourceColor, typeMeta } from './types'
 
 function errorText(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback
@@ -500,11 +494,19 @@ export default function DataSourceDetailPage() {
           <Button icon={<IconLeft />} onClick={() => navigate('/data-sources')}>
             返回
           </Button>
-          <IconStorage style={{ fontSize: 20, color: 'rgb(var(--primary-6))' }} />
+          {ds ? (
+            <DataSourceTypeIcon
+              type={ds.type}
+              color={dataSourceColor(ds.type, ds.properties)}
+              size={26}
+            />
+          ) : (
+            <IconStorage style={{ fontSize: 20, color: 'rgb(var(--primary-6))' }} />
+          )}
           <Typography.Title heading={6} style={{ margin: 0 }}>
             {ds?.name ?? `数据源 #${dataSourceId}`}
           </Typography.Title>
-          {ds ? <Tag color="arcoblue">{TYPE_LABELS[ds.type] ?? ds.type}</Tag> : null}
+          {ds ? <Tag color="arcoblue">{typeMeta(ds.type).label}</Tag> : null}
         </Space>
         <Typography.Text type="secondary">只读浏览</Typography.Text>
       </div>
