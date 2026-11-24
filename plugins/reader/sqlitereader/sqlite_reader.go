@@ -9,9 +9,9 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/longkeyy/go-datax/common/config"
 	"github.com/longkeyy/go-datax/common/element"
-	"github.com/longkeyy/go-datax/common/plugin"
-	"github.com/longkeyy/go-datax/common/logger"
 	"github.com/longkeyy/go-datax/common/factory"
+	"github.com/longkeyy/go-datax/common/logger"
+	"github.com/longkeyy/go-datax/common/plugin"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
@@ -29,6 +29,7 @@ type SQLiteReaderJob struct {
 	columns  []string
 	where    string
 	splitPk  string
+	querySql string
 	factory  *factory.DataXFactory
 }
 
@@ -50,16 +51,27 @@ func (job *SQLiteReaderJob) Init(config config.Configuration) error {
 	// 处理第一个连接配置
 	conn := connections[0]
 	job.jdbcUrls = conn.GetStringList("jdbcUrl")
-	job.tables = conn.GetStringList("table")
 
-	if len(job.jdbcUrls) == 0 || len(job.tables) == 0 {
-		return fmt.Errorf("jdbcUrl and table are required")
+	if len(job.jdbcUrls) == 0 {
+		return fmt.Errorf("jdbcUrl is required")
+	}
+
+	// querySql 模式直接执行给定查询，不再要求 table/column。
+	job.querySql = config.GetString("parameter.querySql")
+	if job.querySql != "" {
+		logger.Component().WithComponent("SQLiteReader").Info("SQLite Reader initialized with querySql mode")
+		return nil
+	}
+
+	job.tables = conn.GetStringList("table")
+	if len(job.tables) == 0 {
+		return fmt.Errorf("table is required when querySql is not specified")
 	}
 
 	// 获取列信息
 	job.columns = config.GetStringList("parameter.column")
 	if len(job.columns) == 0 {
-		return fmt.Errorf("column configuration is required")
+		return fmt.Errorf("column is required when querySql is not specified")
 	}
 
 	// 获取可选参数
@@ -76,11 +88,15 @@ func (job *SQLiteReaderJob) Split(adviceNumber int) ([]config.Configuration, err
 	taskConfigs := make([]config.Configuration, 0)
 
 	// 如果没有设置splitPk，则不进行分片，使用单个任务
-	if job.splitPk == "" {
+	if job.querySql != "" || job.splitPk == "" {
 		taskConfig := job.config.Clone()
 		taskConfig.Set("taskId", 0)
 		taskConfigs = append(taskConfigs, taskConfig)
-		logger.Component().WithComponent("SQLiteReader").Info("No splitPk specified, using single task")
+		if job.querySql != "" {
+			logger.Component().WithComponent("SQLiteReader").Info("Using querySql mode, single task")
+		} else {
+			logger.Component().WithComponent("SQLiteReader").Info("No splitPk specified, using single task")
+		}
 		return taskConfigs, nil
 	}
 
@@ -304,6 +320,10 @@ func (task *SQLiteReaderTask) StartRead(recordSender plugin.RecordSender) error 
 }
 
 func (task *SQLiteReaderTask) buildQuery() (string, error) {
+	if task.readerJob.querySql != "" {
+		return task.readerJob.querySql, nil
+	}
+
 	// 构建SELECT语句
 	columns := task.readerJob.columns
 	table := task.readerJob.tables[0]

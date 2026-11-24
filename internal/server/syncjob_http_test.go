@@ -591,6 +591,66 @@ func TestRawConfigGuardrails(t *testing.T) {
 		t.Errorf("transformer message = %q", apiErr.Error.Message)
 	}
 
+	validTransformerContent := rawStreamContent()
+	validTransformerContent["transformer"] = []any{map[string]any{
+		"name": "dx_filter",
+		"parameter": map[string]any{
+			"columnIndex": 0,
+			"paras":       []any{"=", "x"},
+		},
+	}}
+	validTransformer := map[string]any{
+		"name":          "with-valid-transformer",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{validTransformerContent}},
+		},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, validTransformer)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("valid transformer status = %d, want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	scriptContent := rawStreamContent()
+	scriptContent["transformer"] = []any{map[string]any{
+		"name": "dx_script",
+		"parameter": map[string]any{
+			"language": "javascript",
+			"code":     "function transform() { return true; }",
+		},
+	}}
+	scriptJob := map[string]any{
+		"name":          "with-script-transformer",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{scriptContent}},
+		},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, scriptJob)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("dx_script status = %d, want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	badScriptContent := rawStreamContent()
+	badScriptContent["transformer"] = []any{map[string]any{
+		"name": "dx_script",
+		"parameter": map[string]any{
+			"language": "groovy",
+			"code":     "return record",
+		},
+	}}
+	badScript := map[string]any{
+		"name":          "with-bad-script-transformer",
+		"authoringMode": "raw",
+		"raw": map[string]any{
+			"job": map[string]any{"content": []any{badScriptContent}},
+		},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, badScript)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unsupported language") {
+		t.Fatalf("unsupported script language status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
 	single := map[string]any{
 		"name":          "single-content",
 		"authoringMode": "raw",

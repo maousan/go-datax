@@ -167,9 +167,25 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal_error", "检查数据源引用失败")
 		return
 	}
-	if len(names) > 0 {
+	templates, err := s.dataStore.QueryTemplatesUsingDataSource(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查数据集引用失败")
+		return
+	}
+	if len(names) > 0 || len(templates) > 0 {
+		var parts []string
+		if len(names) > 0 {
+			parts = append(parts, "datax任务："+strings.Join(names, "、"))
+		}
+		if len(templates) > 0 {
+			templateNames := make([]string, 0, len(templates))
+			for _, template := range templates {
+				templateNames = append(templateNames, template.Name)
+			}
+			parts = append(parts, "数据集："+strings.Join(templateNames, "、"))
+		}
 		writeError(w, http.StatusConflict, "data_source_in_use",
-			"该数据源被以下同步任务引用："+strings.Join(names, "、"))
+			"该数据源被以下配置引用："+strings.Join(parts, "；"))
 		return
 	}
 

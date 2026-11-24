@@ -15,7 +15,7 @@ import (
 func (s *Server) handleListSyncJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := s.dataStore.ListSyncJobs(r.URL.Query().Get("query"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -29,11 +29,17 @@ func (s *Server) handleListSyncJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	templates, err := s.templatesForJobs(jobs...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据集失败")
+		return
+	}
+
 	response := make([]syncJobResponse, 0, len(jobs))
 	for _, job := range jobs {
-		item, err := toSyncJobResponse(job)
+		item, err := toSyncJobResponse(job, templates)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "解析同步任务失败")
+			writeError(w, http.StatusInternalServerError, "internal_error", "解析datax任务失败")
 			return
 		}
 		if run, ok := latestRuns[job.ID]; ok {
@@ -53,15 +59,20 @@ func (s *Server) handleGetSyncJob(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.dataStore.GetSyncJob(id)
 	if errors.Is(err, store.ErrSyncJobNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
-	response, err := toSyncJobResponse(job)
+	templates, err := s.templatesForJobs(job)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据集失败")
+		return
+	}
+	response, err := toSyncJobResponse(job, templates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -87,10 +98,10 @@ func (s *Server) handleSyncJobStats(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := s.dataStore.GetSyncJob(id); err != nil {
 		if errors.Is(err, store.ErrSyncJobNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+			writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -167,14 +178,19 @@ func (s *Server) createSyncJob(w http.ResponseWriter, req syncJobRequest) {
 	}
 	if err := s.dataStore.CreateSyncJob(job); err != nil {
 		if errors.Is(err, store.ErrDuplicateSyncJobName) {
-			writeError(w, http.StatusConflict, "duplicate_name", "同步任务名称已存在")
+			writeError(w, http.StatusConflict, "duplicate_name", "datax任务名称已存在")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "创建同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "创建datax任务失败")
 		return
 	}
 
-	response, err := toSyncJobResponse(*job)
+	templates, err := s.templatesForJobs(*job)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据集失败")
+		return
+	}
+	response, err := toSyncJobResponse(*job, templates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -191,11 +207,11 @@ func (s *Server) handleUpdateSyncJob(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := s.dataStore.GetSyncJob(id)
 	if errors.Is(err, store.ErrSyncJobNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -227,14 +243,19 @@ func (s *Server) handleUpdateSyncJob(w http.ResponseWriter, r *http.Request) {
 	existing.RetryIntervalSeconds = normalized.RetryIntervalSeconds
 	if err := s.dataStore.UpdateSyncJob(&existing); err != nil {
 		if errors.Is(err, store.ErrDuplicateSyncJobName) {
-			writeError(w, http.StatusConflict, "duplicate_name", "同步任务名称已存在")
+			writeError(w, http.StatusConflict, "duplicate_name", "datax任务名称已存在")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "更新同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "更新datax任务失败")
 		return
 	}
 
-	response, err := toSyncJobResponse(existing)
+	templates, err := s.templatesForJobs(existing)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据集失败")
+		return
+	}
+	response, err := toSyncJobResponse(existing, templates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -261,12 +282,22 @@ func (s *Server) handleDeleteSyncJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	count, err := s.dataStore.CountCollectTasksForJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查采集任务引用失败")
+		return
+	}
+	if count > 0 {
+		writeError(w, http.StatusConflict, "job_in_use", fmt.Sprintf("该任务定义被 %d 个采集任务引用，请先删除采集任务", count))
+		return
+	}
+
 	if err := s.dataStore.DeleteSyncJob(id); err != nil {
 		if errors.Is(err, store.ErrSyncJobNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+			writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "删除同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "删除datax任务失败")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -281,11 +312,11 @@ func (s *Server) handleDuplicateSyncJob(w http.ResponseWriter, r *http.Request) 
 
 	original, err := s.dataStore.GetSyncJob(id)
 	if errors.Is(err, store.ErrSyncJobNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -297,11 +328,16 @@ func (s *Server) handleDuplicateSyncJob(w http.ResponseWriter, r *http.Request) 
 		RetryIntervalSeconds: original.RetryIntervalSeconds,
 	}
 	if err := s.dataStore.CreateSyncJob(copyJob); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "复制同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "复制datax任务失败")
 		return
 	}
 
-	response, err := toSyncJobResponse(*copyJob)
+	templates, err := s.templatesForJobs(*copyJob)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据集失败")
+		return
+	}
+	response, err := toSyncJobResponse(*copyJob, templates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -336,11 +372,11 @@ func (s *Server) handleExportSyncJob(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.dataStore.GetSyncJob(id)
 	if errors.Is(err, store.ErrSyncJobNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "同步任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", "datax任务不存在")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取同步任务失败")
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取datax任务失败")
 		return
 	}
 
@@ -367,14 +403,18 @@ func (s *Server) encodeDefinition(req syncJobRequest) (string, error) {
 		return string(req.Raw), nil
 	}
 
-	dataSources, err := s.dataSourcesForForm(*req.Form)
+	ctx, err := s.formContextFor(*req.Form)
 	if err != nil {
 		return "", err
 	}
-	if err := validateFormWriteMode(*req.Form, dataSources, true); err != nil {
+	_, readerColumns, _, _, _ := ctx.readerValues(*req.Form)
+	if len(readerColumns) != len(req.Form.Writer.Column) {
+		return "", fmt.Errorf("读取列与写入列数量必须一致")
+	}
+	if err := validateFormWriteMode(*req.Form, ctx.writerSource, true); err != nil {
 		return "", err
 	}
-	if _, err := materializeForm(*req.Form, dataSources); err != nil {
+	if _, err := materializeForm(*req.Form, ctx); err != nil {
 		return "", err
 	}
 
@@ -385,22 +425,42 @@ func (s *Server) encodeDefinition(req syncJobRequest) (string, error) {
 	return string(data), nil
 }
 
-func (s *Server) dataSourcesForForm(def formJobDefinition) (map[int64]store.DataSource, error) {
-	result := map[int64]store.DataSource{}
-	for _, id := range []int64{def.Reader.DataSourceID, def.Writer.DataSourceID} {
-		if _, exists := result[id]; exists {
-			continue
-		}
-		ds, err := s.dataStore.GetDataSource(id)
-		if errors.Is(err, store.ErrDataSourceNotFound) {
-			return nil, fmt.Errorf("数据源 %d 不存在", id)
+// formContextFor 加载表单任务引用的数据源；模板模式下读取端取模板所属数据源。
+func (s *Server) formContextFor(def formJobDefinition) (formContext, error) {
+	var ctx formContext
+	if def.Reader.TemplateID != nil && *def.Reader.TemplateID > 0 {
+		template, err := s.dataStore.GetQueryTemplate(*def.Reader.TemplateID)
+		if errors.Is(err, store.ErrQueryTemplateNotFound) {
+			return ctx, fmt.Errorf("数据集 %d 不存在", *def.Reader.TemplateID)
 		}
 		if err != nil {
-			return nil, err
+			return ctx, err
 		}
-		result[id] = ds
+		ctx.template = &template
 	}
-	return result, nil
+
+	readerID := def.Reader.DataSourceID
+	if ctx.template != nil {
+		readerID = ctx.template.DataSourceID
+	}
+	readerSource, err := s.dataStore.GetDataSource(readerID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		return ctx, fmt.Errorf("数据源 %d 不存在", readerID)
+	}
+	if err != nil {
+		return ctx, err
+	}
+	writerSource, err := s.dataStore.GetDataSource(def.Writer.DataSourceID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		return ctx, fmt.Errorf("数据源 %d 不存在", def.Writer.DataSourceID)
+	}
+	if err != nil {
+		return ctx, err
+	}
+
+	ctx.readerSource = readerSource
+	ctx.writerSource = writerSource
+	return ctx, nil
 }
 
 func (s *Server) exportConfig(job store.SyncJob) (map[string]any, error) {
@@ -419,14 +479,18 @@ func (s *Server) exportConfig(job store.SyncJob) (map[string]any, error) {
 	if err := json.Unmarshal([]byte(job.Definition), &def); err != nil {
 		return nil, fmt.Errorf("解析任务配置失败: %v", err)
 	}
-	dataSources, err := s.dataSourcesForForm(def)
+	ctx, err := s.formContextFor(def)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateFormWriteMode(def, dataSources, false); err != nil {
+	_, readerColumns, _, _, _ := ctx.readerValues(def)
+	if len(readerColumns) != len(def.Writer.Column) {
+		return nil, fmt.Errorf("读取列与写入列数量必须一致")
+	}
+	if err := validateFormWriteMode(def, ctx.writerSource, false); err != nil {
 		return nil, err
 	}
-	return materializeForm(def, dataSources)
+	return materializeForm(def, ctx)
 }
 
 func (s *Server) jobNamesReferencingDataSource(dataSourceID int64) ([]string, error) {

@@ -2,11 +2,17 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
+	commonconfig "github.com/longkeyy/go-datax/common/config"
+	"github.com/longkeyy/go-datax/common/transformer"
 	"github.com/longkeyy/go-datax/internal/store"
+
+	// Register dx_script so raw job validation recognises it.
+	_ "github.com/longkeyy/go-datax/plugins/transformer/script"
 )
 
 var pluginsByDataSourceType = map[string][2]string{
@@ -19,6 +25,7 @@ var pluginsByDataSourceType = map[string][2]string{
 
 type formEndpoint struct {
 	DataSourceID int64    `json:"dataSourceId"`
+	TemplateID   *int64   `json:"templateId,omitempty"`
 	Table        string   `json:"table"`
 	Column       []string `json:"column"`
 	Where        string   `json:"where,omitempty"`
@@ -51,18 +58,31 @@ type syncJobRequest struct {
 	RetryIntervalSeconds int                `json:"retryIntervalSeconds"`
 }
 
+type queryTemplateSummary struct {
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	DataSourceID int64    `json:"dataSourceId"`
+	SQL          string   `json:"sql"`
+	Table        string   `json:"table"`
+	Columns      []string `json:"columns"`
+	Where        string   `json:"where"`
+	SplitPk      string   `json:"splitPk"`
+}
+
 type syncJobResponse struct {
-	ID                   int64              `json:"id"`
-	Name                 string             `json:"name"`
-	AuthoringMode        string             `json:"authoringMode"`
-	Form                 *formJobDefinition `json:"form,omitempty"`
-	Raw                  json.RawMessage    `json:"raw,omitempty"`
-	Summary              string             `json:"summary"`
-	RetryMax             int                `json:"retryMax"`
-	RetryIntervalSeconds int                `json:"retryIntervalSeconds"`
-	LastRun              *runResponse       `json:"lastRun,omitempty"`
-	CreatedAt            string             `json:"createdAt"`
-	UpdatedAt            string             `json:"updatedAt"`
+	ID                   int64                 `json:"id"`
+	Name                 string                `json:"name"`
+	AuthoringMode        string                `json:"authoringMode"`
+	Form                 *formJobDefinition    `json:"form,omitempty"`
+	Raw                  json.RawMessage       `json:"raw,omitempty"`
+	Summary              string                `json:"summary"`
+	QueryTemplate        *queryTemplateSummary `json:"queryTemplate,omitempty"`
+	RetryMax             int                   `json:"retryMax"`
+	RetryIntervalSeconds int                   `json:"retryIntervalSeconds"`
+	LastRun              *runResponse          `json:"lastRun,omitempty"`
+	CreatedAt            string                `json:"createdAt"`
+	UpdatedAt            string                `json:"updatedAt"`
 }
 
 func (req syncJobRequest) normalized() (syncJobRequest, error) {
@@ -106,17 +126,38 @@ func (req syncJobRequest) normalized() (syncJobRequest, error) {
 		if def.Setting.Channel > 32 {
 			return req, fmt.Errorf("并发通道数必须在 1 到 32 之间")
 		}
-		if def.Reader.DataSourceID <= 0 || def.Writer.DataSourceID <= 0 {
-			return req, fmt.Errorf("必须选择读取与写入数据源")
+		templateMode := def.Reader.TemplateID != nil && *def.Reader.TemplateID > 0
+		if templateMode {
+			// 模板模式下读取端由模板提供，清掉可能残留的内联配置。
+			def.Reader.DataSourceID = 0
+			def.Reader.Table = ""
+			def.Reader.Column = nil
+			def.Reader.Where = ""
+			def.Reader.SplitPk = ""
 		}
-		if def.Reader.Table == "" || def.Writer.Table == "" {
-			return req, fmt.Errorf("表名不能为空")
+
+		if def.Writer.DataSourceID <= 0 {
+			return req, fmt.Errorf("必须选择写入数据源")
 		}
-		if len(def.Reader.Column) == 0 || len(def.Writer.Column) == 0 {
-			return req, fmt.Errorf("列不能为空")
+		if def.Writer.Table == "" {
+			return req, fmt.Errorf("写入表名不能为空")
 		}
-		if len(def.Reader.Column) != len(def.Writer.Column) {
-			return req, fmt.Errorf("读取列与写入列数量必须一致")
+		if len(def.Writer.Column) == 0 {
+			return req, fmt.Errorf("写入列不能为空")
+		}
+		if !templateMode {
+			if def.Reader.DataSourceID <= 0 {
+				return req, fmt.Errorf("必须选择读取数据源")
+			}
+			if def.Reader.Table == "" {
+				return req, fmt.Errorf("读取表名不能为空")
+			}
+			if len(def.Reader.Column) == 0 {
+				return req, fmt.Errorf("读取列不能为空")
+			}
+			if len(def.Reader.Column) != len(def.Writer.Column) {
+				return req, fmt.Errorf("读取列与写入列数量必须一致")
+			}
 		}
 		req.Form = &def
 
@@ -158,10 +199,24 @@ func validateRawConfig(raw json.RawMessage) error {
 		if !ok {
 			return fmt.Errorf("job.content[%d] 格式不正确", index)
 		}
-		if transformer, exists := content["transformer"]; exists {
-			if list, ok := transformer.([]any); !ok || len(list) > 0 {
-				return fmt.Errorf("transformer 功能尚未实现，job.content[%d].transformer 不会生效", index)
+		if transformerValue, exists := content["transformer"]; exists {
+			list, ok := transformerValue.([]any)
+			if !ok {
+				return fmt.Errorf("job.content[%d].transformer 必须是数组", index)
 			}
+			transformerConfigs := make([]commonconfig.Configuration, 0, len(list))
+			for transformerIndex, item := range list {
+				itemConfig, ok := item.(map[string]any)
+				if !ok {
+					return fmt.Errorf("job.content[%d].transformer[%d] 格式不正确", index, transformerIndex)
+				}
+				transformerConfigs = append(transformerConfigs, commonconfig.NewConfigurationFromMap(itemConfig))
+			}
+			executions, err := transformer.BuildExecutions(transformerConfigs)
+			if err != nil {
+				return fmt.Errorf("job.content[%d].transformer 配置无效: %v", index, err)
+			}
+			transformer.CloseExecutions(executions)
 		}
 		for _, role := range []string{"reader", "writer"} {
 			endpoint, ok := content[role].(map[string]any)
@@ -183,12 +238,7 @@ var oracleUpdatePattern = regexp.MustCompile(`(?i)^update\s*\((.*)\)$`)
 
 // validateFormWriteMode 校验表单写入模式是否被对应 writer 支持。
 // strict 为 true 时用于保存，false 时用于运行旧任务（兼容历史配置）。
-func validateFormWriteMode(def formJobDefinition, dataSources map[int64]store.DataSource, strict bool) error {
-	writer, ok := dataSources[def.Writer.DataSourceID]
-	if !ok {
-		return fmt.Errorf("写入数据源不存在")
-	}
-
+func validateFormWriteMode(def formJobDefinition, writer store.DataSource, strict bool) error {
 	mode := strings.TrimSpace(def.Writer.WriteMode)
 	if mode == "" {
 		mode = "insert"
@@ -254,16 +304,24 @@ func containsColumnFold(columns []string, want string) bool {
 	return false
 }
 
+type formContext struct {
+	readerSource store.DataSource
+	writerSource store.DataSource
+	template     *store.QueryTemplate
+}
+
+func (ctx formContext) readerValues(def formJobDefinition) (table string, columns []string, where, splitPk, sql string) {
+	if ctx.template != nil {
+		return ctx.template.TableName, ctx.template.ColumnList(), ctx.template.WhereClause,
+			ctx.template.SplitPk, ctx.template.SQLText
+	}
+	return def.Reader.Table, def.Reader.Column, def.Reader.Where, def.Reader.SplitPk, ""
+}
+
 // materialize 把表单定义展开为可执行的 DataX 配置。
-func materializeForm(def formJobDefinition, dataSources map[int64]store.DataSource) (map[string]any, error) {
-	readerSource, ok := dataSources[def.Reader.DataSourceID]
-	if !ok {
-		return nil, fmt.Errorf("读取数据源不存在")
-	}
-	writerSource, ok := dataSources[def.Writer.DataSourceID]
-	if !ok {
-		return nil, fmt.Errorf("写入数据源不存在")
-	}
+func materializeForm(def formJobDefinition, ctx formContext) (map[string]any, error) {
+	readerSource := ctx.readerSource
+	writerSource := ctx.writerSource
 
 	readerPlugins, ok := pluginsByDataSourceType[readerSource.Type]
 	if !ok {
@@ -274,22 +332,48 @@ func materializeForm(def formJobDefinition, dataSources map[int64]store.DataSour
 		return nil, fmt.Errorf("不支持的数据源类型: %s", writerSource.Type)
 	}
 
-	readerParams := map[string]any{
-		"username": readerSource.Username,
-		"password": readerSource.Password,
-		"connection": []map[string]any{
-			{
-				"jdbcUrl": readerJDBCURL(readerSource.Type, readerSource.JDBCUrl),
-				"table":   []string{def.Reader.Table},
+	readerTable, readerColumns, readerWhere, readerSplitPk, readerSQL := ctx.readerValues(def)
+	if len(readerColumns) == 0 {
+		return nil, fmt.Errorf("读取端配置为空")
+	}
+
+	var readerParams map[string]any
+	if readerSQL != "" {
+		querySQL, err := buildTemplateReaderQuery(readerSQL, readerColumns, readerSource.Type)
+		if err != nil {
+			return nil, fmt.Errorf("数据集 SQL 无效: %v", err)
+		}
+		readerParams = map[string]any{
+			"username": readerSource.Username,
+			"password": readerSource.Password,
+			"connection": []map[string]any{
+				{
+					"jdbcUrl": readerJDBCURL(readerSource.Type, readerSource.JDBCUrl),
+				},
 			},
-		},
-		"column": def.Reader.Column,
-	}
-	if def.Reader.Where != "" {
-		readerParams["where"] = def.Reader.Where
-	}
-	if def.Reader.SplitPk != "" {
-		readerParams["splitPk"] = def.Reader.SplitPk
+			"querySql": querySQL,
+		}
+	} else {
+		if strings.TrimSpace(readerTable) == "" {
+			return nil, fmt.Errorf("读取端配置为空")
+		}
+		readerParams = map[string]any{
+			"username": readerSource.Username,
+			"password": readerSource.Password,
+			"connection": []map[string]any{
+				{
+					"jdbcUrl": readerJDBCURL(readerSource.Type, readerSource.JDBCUrl),
+					"table":   []string{readerTable},
+				},
+			},
+			"column": readerColumns,
+		}
+		if readerWhere != "" {
+			readerParams["where"] = readerWhere
+		}
+		if readerSplitPk != "" {
+			readerParams["splitPk"] = readerSplitPk
+		}
 	}
 
 	writerParams := map[string]any{
@@ -350,7 +434,37 @@ func writerJDBCURL(dataSourceType, jdbcURL string) any {
 	}
 }
 
-func toSyncJobResponse(job store.SyncJob) (syncJobResponse, error) {
+// templatesForJobs 收集任务引用到的数据集，供响应组装使用。
+func (s *Server) templatesForJobs(jobs ...store.SyncJob) (map[int64]store.QueryTemplate, error) {
+	result := map[int64]store.QueryTemplate{}
+	for _, job := range jobs {
+		if job.AuthoringMode != "form" {
+			continue
+		}
+		var def formJobDefinition
+		if err := json.Unmarshal([]byte(job.Definition), &def); err != nil {
+			continue
+		}
+		if def.Reader.TemplateID == nil || *def.Reader.TemplateID <= 0 {
+			continue
+		}
+		id := *def.Reader.TemplateID
+		if _, exists := result[id]; exists {
+			continue
+		}
+		template, err := s.dataStore.GetQueryTemplate(id)
+		if errors.Is(err, store.ErrQueryTemplateNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[id] = template
+	}
+	return result, nil
+}
+
+func toSyncJobResponse(job store.SyncJob, templates map[int64]store.QueryTemplate) (syncJobResponse, error) {
 	response := syncJobResponse{
 		ID:                   job.ID,
 		Name:                 job.Name,
@@ -368,7 +482,29 @@ func toSyncJobResponse(job store.SyncJob) (syncJobResponse, error) {
 			return response, fmt.Errorf("解析任务配置失败: %v", err)
 		}
 		response.Form = &def
-		response.Summary = def.Reader.Table + " → " + def.Writer.Table
+		readerTable := def.Reader.Table
+		if def.Reader.TemplateID != nil {
+			if template, ok := templates[*def.Reader.TemplateID]; ok {
+				readerTable = template.TableName
+				if template.SQLText != "" {
+					readerTable = "SQL 数据集"
+				}
+				response.QueryTemplate = &queryTemplateSummary{
+					ID:           template.ID,
+					Name:         template.Name,
+					Description:  template.Description,
+					DataSourceID: template.DataSourceID,
+					SQL:          template.SQLText,
+					Table:        template.TableName,
+					Columns:      template.ColumnList(),
+					Where:        template.WhereClause,
+					SplitPk:      template.SplitPk,
+				}
+			} else {
+				readerTable = fmt.Sprintf("模板#%d", *def.Reader.TemplateID)
+			}
+		}
+		response.Summary = readerTable + " → " + def.Writer.Table
 	case "raw":
 		raw := json.RawMessage(job.Definition)
 		response.Raw = raw
