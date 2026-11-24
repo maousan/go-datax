@@ -1,0 +1,4 @@
+﻿"iteration","exitBeforeKill","runSecondsBeforeKill","partialRowsCommitted","retryExitCode","retryDurationSeconds","retryRows","retryPeakWorkingSetMB","recoverySeconds","verifiedRows","expectedRows","retryJson"
+"1","False","10.333","346112","0","33.389","1000000","180.4","34.721","1000000","1000000","bench/results/raw/s6-recovery-run1-iter1.json"
+"2","False","10.236","269312","0","32.681","1000000","180","33.578","1000000","1000000","bench/results/raw/s6-recovery-run2-iter2.json"
+"3","False","10.237","332800","0","49.778","1000000","180.1","50.625","1000000","1000000","bench/results/raw/s6-recovery-run3-iter3.json"
