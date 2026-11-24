@@ -88,6 +88,6 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>('PUT', path, body)
 }
 
-export function apiDelete(path: string): Promise<void> {
-  return apiRequest<void>('DELETE', path)
+export function apiDelete<T = void>(path: string): Promise<T> {
+  return apiRequest<T>('DELETE', path)
 }
