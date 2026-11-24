@@ -193,83 +193,107 @@ function SyncJobDetailView({ jobId }: { jobId: number }) {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card
-        title={
-          <Space>
-            <Button type="text" icon={<IconLeft />} onClick={() => navigate('/sync-jobs')}>
-              返回
-            </Button>
-            <Typography.Text>{job?.name ?? `任务 #${jobId}`}</Typography.Text>
-            {job ? <Tag color={MODE_COLORS[job.authoringMode]}>{MODE_LABELS[job.authoringMode]}</Tag> : null}
-          </Space>
-        }
-        extra={
-          <Space>
-            <Button
-              type="primary"
-              icon={<IconPlayArrow />}
-              loading={startRunMutation.isPending}
-              disabled={!job || running}
-              onClick={handleRun}
-            >
-              {running ? '运行中' : '运行'}
-            </Button>
-            <Button
-              icon={<IconEdit />}
-              disabled={!job}
-              onClick={() => navigate(`/sync-jobs?edit=${jobId}`)}
-            >
-              编辑
-            </Button>
-            <Button
-              icon={<IconCopy />}
-              loading={duplicateMutation.isPending}
-              disabled={!job}
-              onClick={handleDuplicate}
-            >
-              复制
-            </Button>
-            <Popconfirm
-              content="导出文件包含数据库连接凭据，确认导出？"
-              okText="确定"
-              cancelText="取消"
-              onOk={handleExport}
-            >
-              <Button icon={<IconExport />} disabled={!job}>
-                导出
-              </Button>
-            </Popconfirm>
-            <Popconfirm
-              content="确认删除该任务？运行历史会保留。"
-              okText="确定"
-              cancelText="取消"
-              onOk={handleDelete}
-            >
-              <Button
-                status="danger"
-                icon={<IconDelete />}
-                loading={deleteMutation.isPending}
-                disabled={!job}
-              >
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        }
-      >
+      <Card>
         {jobQuery.isLoading ? (
           <Spin />
         ) : job ? (
-          <Descriptions
-            column={4}
-            data={[
-              { label: '任务编号', value: `#${job.id}` },
-              { label: '编写模式', value: MODE_LABELS[job.authoringMode] },
-              { label: '创建时间', value: formatTime(job.createdAt) },
-              { label: '更新时间', value: formatTime(job.updatedAt) },
-              { label: '配置摘要', value: job.summary, span: 4 },
-            ]}
-          />
+          <>
+            <div style={{ marginBottom: 8 }}>
+              <Link
+                onClick={() => navigate('/sync-jobs')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: 0,
+                  color: 'var(--color-text-3)',
+                  fontSize: 13,
+                }}
+              >
+                <IconLeft /> 返回任务列表
+              </Link>
+            </div>
+
+            <Space size={10} wrap>
+              <Typography.Title heading={4} style={{ margin: 0 }}>
+                {job.name}
+              </Typography.Title>
+              <Tag color={MODE_COLORS[job.authoringMode]}>
+                {MODE_LABELS[job.authoringMode]}
+              </Tag>
+            </Space>
+
+            <div style={{ marginTop: 6 }}>
+              <Typography.Text type="secondary">同步链路：</Typography.Text>
+              <Typography.Text>{job.summary}</Typography.Text>
+            </div>
+
+            <Typography.Text
+              type="secondary"
+              style={{ display: 'block', marginTop: 6, fontSize: 12 }}
+            >
+              任务编号 #{job.id} · 创建 {formatTime(job.createdAt)} · 更新{' '}
+              {formatTime(job.updatedAt)}
+            </Typography.Text>
+
+            <Divider style={{ margin: '14px 0' }} />
+
+            <Space size={8} wrap>
+              <Button
+                type="primary"
+                icon={<IconPlayArrow />}
+                loading={startRunMutation.isPending}
+                disabled={!job || running}
+                onClick={handleRun}
+              >
+                {running ? '运行中' : '运行'}
+              </Button>
+              <Button
+                type="secondary"
+                icon={<IconEdit />}
+                disabled={!job}
+                onClick={() => navigate(`/sync-jobs?edit=${jobId}`)}
+              >
+                编辑
+              </Button>
+              <Button
+                type="secondary"
+                icon={<IconCopy />}
+                loading={duplicateMutation.isPending}
+                disabled={!job}
+                onClick={handleDuplicate}
+              >
+                复制
+              </Button>
+              <Popconfirm
+                content="导出文件包含数据库连接凭据，确认导出？"
+                okText="确定"
+                cancelText="取消"
+                onOk={handleExport}
+              >
+                <Button type="secondary" icon={<IconExport />} disabled={!job}>
+                  导出
+                </Button>
+              </Popconfirm>
+              <Divider type="vertical" style={{ height: 20, margin: '0 4px' }} />
+              <Popconfirm
+                content="确认删除该任务？运行历史会保留。"
+                okText="确定"
+                cancelText="取消"
+                onOk={handleDelete}
+              >
+                <Button
+                  type="text"
+                  status="danger"
+                  icon={<IconDelete />}
+                  loading={deleteMutation.isPending}
+                  disabled={!job}
+                >
+                  删除
+                </Button>
+              </Popconfirm>
+            </Space>
+          </>
         ) : (
           <Alert type="error" content="任务不存在或已被删除" />
         )}
