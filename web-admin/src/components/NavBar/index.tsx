@@ -10,6 +10,7 @@ import {
 } from '@arco-design/web-react'
 import {
   IconLanguage,
+  IconLock,
   IconMoonFill,
   IconNotification,
   IconPoweroff,
@@ -23,6 +24,7 @@ import { useNavigate } from 'react-router'
 import { useMe } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import logo from '../../assets/logo.svg'
+import ChangePasswordModal from './ChangePasswordModal'
 import IconButton from './IconButton'
 import styles from './style/index.module.less'
 
@@ -34,6 +36,7 @@ export default function NavBar() {
   const { token, logout } = useAuth()
   const me = useMe(Boolean(token))
   const [theme, setTheme] = useState(() => window.localStorage.getItem(THEME_KEY) ?? 'light')
+  const [passwordOpen, setPasswordOpen] = useState(false)
 
   useEffect(() => {
     document.body.setAttribute('arco-theme', theme)
@@ -56,7 +59,16 @@ export default function NavBar() {
   }
 
   const droplist = (
-    <Menu onClickMenuItem={(key) => key === 'logout' && handleLogout()}>
+    <Menu
+      onClickMenuItem={(key) => {
+        if (key === 'password') setPasswordOpen(true)
+        if (key === 'logout') handleLogout()
+      }}
+    >
+      <Menu.Item key="password">
+        <IconLock className={styles['dropdown-icon']} />
+        修改密码
+      </Menu.Item>
       <Menu.Item key="logout">
         <IconPoweroff className={styles['dropdown-icon']} />
         退出登录
@@ -133,6 +145,11 @@ export default function NavBar() {
           </Space>
         </li>
       </ul>
+
+      <ChangePasswordModal
+        visible={passwordOpen}
+        onClose={() => setPasswordOpen(false)}
+      />
     </div>
   )
 }
