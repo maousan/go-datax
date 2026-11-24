@@ -1,3 +1,6 @@
+// Arco 的静态 Message/Notification 依赖 ReactDOM.render；
+// React 19 已移除该 API，需要在任何 Arco 组件加载前注入 createRoot 适配器。
+import '@arco-design/web-react/es/_util/react-19-adapter'
 import '@arco-design/web-react/dist/css/arco.css'
 import '@arco-themes/react-arco-pro/css/arco.css'
 import { ConfigProvider } from '@arco-design/web-react'
