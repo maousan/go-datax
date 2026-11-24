@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file.
     - All-primary-key tables (e.g., junction tables): Falls back to DO NOTHING/IGNORE to avoid syntax errors
     - Composite primary keys: Fully supported with proper conflict detection
   - **Migration Note**: If your workload relies on skipping duplicates, you may see different behavior. Consider reviewing your data sync logic.
+- **告警管理取代系统设置中的通知设置**: 旧的单 Webhook 通知接口已移除
+  - `GET/PUT /api/v1/settings/notifications` 与 `/test` 不再存在，改用 `GET/PUT /api/v1/alerts/config`、`POST /api/v1/alerts/config/test`
+  - 首次启动时会自动把旧的 `notifications` 配置迁移为一条告警渠道，无需手工重配
+  - 告警日志通过 `GET/DELETE /api/v1/alerts/logs` 查询与清理
 
 ### Changed
 - **架构改进**: 重构为无状态设计，支持灵活的执行模式
@@ -28,11 +32,38 @@ All notable changes to this project will be documented in this file.
   - CLI 模式完全向后兼容，无破坏性变更
 
 ### Added
+- **告警管理与告警日志**:
+  - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
+  - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook
+  - 每个渠道可独立选择失败、恢复、成功、取消事件；钉钉/飞书机器人支持加签密钥
+  - SMTP 密码与签名密钥在接口返回时掩码，更新时留空或保持掩码表示不修改
+  - 运行结束按事件分发到所有匹配渠道；失败后会自动重试的任务只在最终失败或恢复时告警
+  - 每次投递（含测试发送）都会记录告警日志，包含渠道、事件、任务、运行、耗时与错误，支持筛选、分页、清空与按保留天数自动清理
 - **管理台「服务监控」页面**:
   - 新增 `GET /api/v1/monitor`，每 10 秒采样进程 CPU 使用率、协程数量与状态、堆内存和 GC 次数，保留最近 15 分钟
   - 新增「运行中心 → 服务监控」页面，包含处理器、协程、协程状态、内存四组趋势图，每 10 秒自动刷新
   - 协程状态通过解析运行时协程堆栈归为运行中、阻塞中、等待中、系统调用与其他
   - CPU 使用率按整机核心数折算，Windows 使用 `GetProcessTimes`、Unix 使用 `getrusage` 采集进程 CPU 时间
+- **`dx_script` Custom Script Transformer**:
+  - New record-level transformer backed by [go-scripts](https://github.com/tx7do/go-scripts) pure-Go engines
+  - Supports `language`: `javascript` (goja), `starlark` (starlark-go) and `expr` (expr-lang)
+  - Configure with `code` or `codeFile` (relative paths resolve against `$GO_DATAX_HOME`, falling back to `$ADDAX_HOME`)
+  - Language-neutral record API: `get_string`/`set_long`/`set_double`/`set_bool`/`set_date`/`set_bytes`/`set_null`, `is_null`, `get_type`, `column_count`, `log`
+  - Returning `false` filters the record; script errors, conversion failures and out-of-range columns become dirty data
+  - JavaScript supports a per-record `timeoutMs`; scripts are compiled once and executed per record without recompilation
+  - `dx_groovy` remains unsupported (no JVM); `dx_script` is the replacement, and existing Groovy scripts must be rewritten
+- **Transformer Pipeline with Addax-compatible Metrics and Dirty Data Handling**:
+  - Re-enabled the transformer chain (`common/transformer`, `core/registry.TransformerChannel`), which had been commented out during the architecture refactor
+  - Built-ins: `dx_substr`, `dx_pad`, `dx_replace`, `dx_filter`, plus go-datax's `dx_digest`
+    - `dx_replace` supports the Addax positional form (`pos`, `length`, `str`) and the legacy 2-parameter global replace form
+    - `dx_filter` uses full-match regular expressions for `like`/`not like` and follows Addax null semantics
+    - String positions/lengths are rune-based, so CJK values are not split by bytes
+  - `dx_groovy`/`dx_map` fail fast with an explicit "not supported" error
+  - Metrics: transform input/output records & bytes, dirty records & bytes, success/failed/filter counts, and total/per-transformer used time
+  - Dirty data: the first failing transformer marks the record dirty, skips the remaining transformers and drops the record; dirty records count toward `errorLimit`
+  - `errorLimit.percentage` now accepts both DataX-style fractions (`0.02`) and percentages (`5`); previously the integer conversion truncated fractions and disabled the limit
+  - `JobStatus`/`StatsSummary` expose a `transformer` metrics block; fixed writer statistics to increment `writeReceivedRecords` so `succeedRecords` is no longer always zero
+  - Admin server: raw job validation now accepts valid transformer chains and rejects invalid ones (previously rejected every transformer config)
 - **Multi-Table Write Support with Intuitive Channel Semantics**: Enhanced multi-table split logic beyond DataX Java
   - **Channel Semantic**: `channel` parameter always means "concurrency per table" (not total tasks)
   - **Single-Table Mode**: `channel: N` → Creates N parallel tasks for that table
