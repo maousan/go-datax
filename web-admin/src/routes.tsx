@@ -1,6 +1,7 @@
 import {
   IconDashboard,
   IconHistory,
+  IconNotification,
   IconSettings,
   IconStorage,
 } from '@arco-design/web-react/icon'
@@ -27,7 +28,9 @@ export const menuRoutes: MenuRoute[] = [
     icon: IconStorage,
     children: [
       { key: 'data-sources', name: '数据源', path: '/data-sources' },
-      { key: 'sync-jobs', name: '同步任务', path: '/sync-jobs' },
+      { key: 'datasets', name: '数据集', path: '/datasets' },
+      { key: 'sync-jobs', name: 'datax任务', path: '/sync-jobs' },
+      { key: 'collect-tasks', name: '采集任务', path: '/collect-tasks' },
     ],
   },
   {
@@ -37,6 +40,15 @@ export const menuRoutes: MenuRoute[] = [
     children: [
       { key: 'run-history', name: '运行历史', path: '/runs' },
       { key: 'service-monitor', name: '服务监控', path: '/monitor' },
+    ],
+  },
+  {
+    key: 'alerts',
+    name: '告警管理',
+    icon: IconNotification,
+    children: [
+      { key: 'alert-config', name: '告警配置', path: '/alerts/config' },
+      { key: 'alert-logs', name: '告警日志', path: '/alerts/logs' },
     ],
   },
   {
@@ -68,8 +80,9 @@ export function selectedMenuKey(pathname: string): string {
 
 export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
-  if (pathname.startsWith('/data-sources') || pathname.startsWith('/sync-jobs')) return ['data']
+  if (pathname.startsWith('/data-sources') || pathname.startsWith('/datasets') || pathname.startsWith('/sync-jobs') || pathname.startsWith('/collect-tasks')) return ['data']
   if (pathname.startsWith('/runs') || pathname.startsWith('/monitor')) return ['operations']
+  if (pathname.startsWith('/alerts')) return ['alerts']
   return []
 }
 
@@ -85,8 +98,11 @@ function findGroup(pathname: string, routes: MenuRoute[] = menuRoutes): MenuRout
 }
 
 export function breadcrumbFor(pathname: string): string[] {
+  if (pathname.startsWith('/datasets/')) {
+    return ['数据管理', '数据集', pathname.endsWith('/edit') ? '编辑数据集' : '新建数据集']
+  }
   if (pathname.startsWith('/data-sources/')) return ['数据管理', '数据源', '数据源详情']
-  if (pathname.startsWith('/sync-jobs/')) return ['数据管理', '同步任务', '任务详情']
+  if (pathname.startsWith('/sync-jobs/')) return ['数据管理', 'datax任务', '任务详情']
   if (pathname.startsWith('/runs/')) return ['运行中心', '运行历史', '运行详情']
   const groups = findGroup(pathname)
   const leaf = flattenMenuRoutes().find((route) => route.path === pathname)
