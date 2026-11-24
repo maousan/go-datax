@@ -26,6 +26,7 @@ import {
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError } from '../../api/client'
+import { useCollectTasks, type CollectTask } from '../../api/collectTasks'
 import { useDataSources } from '../../api/dataSources'
 import { useRuns, type Run } from '../../api/runs'
 import {
@@ -56,6 +57,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   rerun: '重跑',
   retry: '自动重试',
+  schedule: '定时调度',
 }
 
 const RUNS_PAGE_SIZE = 10
@@ -83,6 +85,7 @@ function SyncJobDetailView({ jobId }: { jobId: number }) {
   const dataSourcesQuery = useDataSources('')
   const [page, setPage] = useState(1)
   const runsQuery = useRuns({ jobId, page, pageSize: RUNS_PAGE_SIZE })
+  const collectTasksQuery = useCollectTasks({ syncJobId: jobId })
   const startRunMutation = useStartRun()
   const duplicateMutation = useDuplicateSyncJob()
   const deleteMutation = useDeleteSyncJob()
@@ -183,7 +186,53 @@ function SyncJobDetailView({ jobId }: { jobId: number }) {
     {
       title: '操作',
       width: 100,
+      fixed: 'right',
       render: (_, run) => <RunDetailLink runId={run.id} />,
+    },
+  ]
+
+  const collectTaskColumns: TableColumnProps<CollectTask>[] = [
+    { title: '名称', dataIndex: 'name', ellipsis: true },
+    {
+      title: 'Cron',
+      dataIndex: 'cronExpr',
+      width: 150,
+      render: (value: string) => (
+        <Typography.Text style={{ fontFamily: 'Consolas, monospace', fontSize: 12 }}>
+          {value}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'enabled',
+      width: 80,
+      render: (enabled: boolean) =>
+        enabled ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>,
+    },
+    {
+      title: '下次运行',
+      dataIndex: 'nextRunAt',
+      width: 170,
+      render: (value: string | null) => formatTime(value),
+    },
+    {
+      title: '最近运行',
+      width: 180,
+      render: (_, task) => {
+        const lastRun = task.lastRun
+        if (!lastRun) {
+          return <Typography.Text type="secondary">未运行</Typography.Text>
+        }
+        return (
+          <Space size={4}>
+            <RunStatusTag status={lastRun.status} />
+            <Link onClick={() => navigate(`/runs/${lastRun.id}`)}>
+              {formatTime(lastRun.startedAt)}
+            </Link>
+          </Space>
+        )
+      },
     },
   ]
 
@@ -370,6 +419,27 @@ function SyncJobDetailView({ jobId }: { jobId: number }) {
         ) : null}
       </Card>
 
+      <Card
+        title="采集任务"
+        extra={
+          <Link
+            onClick={() => navigate(`/collect-tasks?action=create&syncJobId=${jobId}`)}
+          >
+            新建采集任务
+          </Link>
+        }
+      >
+        <Table<CollectTask>
+          rowKey="id"
+          size="small"
+          columns={collectTaskColumns}
+          data={collectTasksQuery.data ?? []}
+          loading={collectTasksQuery.isLoading}
+          pagination={false}
+          noDataElement={<span>还没有采集任务，点击右上角新建</span>}
+        />
+      </Card>
+
       <Card title="运行历史">
         <Table<Run>
           rowKey="id"
@@ -377,6 +447,7 @@ function SyncJobDetailView({ jobId }: { jobId: number }) {
           columns={runColumns}
           data={runsQuery.data?.items ?? []}
           loading={runsQuery.isLoading}
+          scroll={{ x: 980 }}
           pagination={{
             current: runsQuery.data?.page ?? page,
             pageSize: runsQuery.data?.pageSize ?? RUNS_PAGE_SIZE,
@@ -413,22 +484,60 @@ function SyncJobDefinition({
   }
 
   const { reader, writer, setting } = job.form
+  const template = job.queryTemplate
+  const templateSQL = template?.sql ?? ''
+  const readerDataSourceID = template?.dataSourceId ?? reader.dataSourceId
+  const readerTable = template?.table ?? reader.table
+  const readerColumns = template?.columns ?? reader.column
+  const readerWhere = template?.where ?? reader.where
+  const readerSplitPk = template?.splitPk ?? reader.splitPk
 
   return (
     <>
       <Grid.Row gutter={16}>
         <Grid.Col span={12}>
-          <Card title="读取端">
+          <Card
+            title="读取端"
+            extra={
+              template ? <Tag color="blue">数据集：{template.name}</Tag> : null
+            }
+          >
             <Descriptions
               column={1}
-              data={[
-                { label: '数据源', value: dataSourceName(reader.dataSourceId) },
-                { label: '表', value: reader.table || '-' },
-                { label: '列', value: reader.column.join(', ') || '-' },
-                { label: 'WHERE', value: reader.where || '-' },
-                { label: '分片字段', value: reader.splitPk || '-' },
-              ]}
+              data={
+                templateSQL
+                  ? [
+                      { label: '数据源', value: dataSourceName(readerDataSourceID) },
+                      { label: '读取模式', value: 'SQL 单通道（querySql）' },
+                      { label: '列', value: readerColumns.join(', ') || '-' },
+                    ]
+                  : [
+                      { label: '数据源', value: dataSourceName(readerDataSourceID) },
+                      { label: '表', value: readerTable || '-' },
+                      { label: '列', value: readerColumns.join(', ') || '-' },
+                      { label: 'WHERE', value: readerWhere || '-' },
+                      { label: '分片字段', value: readerSplitPk || '-' },
+                    ]
+              }
             />
+            {templateSQL ? (
+              <pre
+                style={{
+                  margin: '12px 0 0',
+                  padding: 12,
+                  borderRadius: 6,
+                  background: 'var(--color-fill-2)',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  maxHeight: 220,
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {templateSQL}
+              </pre>
+            ) : null}
           </Card>
         </Grid.Col>
         <Grid.Col span={12}>

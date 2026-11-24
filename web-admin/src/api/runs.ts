@@ -17,6 +17,8 @@ export interface Run {
   id: number
   syncJobId: number | null
   syncJobName: string
+  collectTaskId: number | null
+  collectTaskName: string
   status: RunStatus
   trigger: string
   startedAt: string

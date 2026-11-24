@@ -30,6 +30,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   rerun: '重跑',
   retry: '自动重试',
+  schedule: '定时调度',
 }
 
 export default function RunDetailPage() {
@@ -148,6 +149,9 @@ function RunDetailView({ runId }: { runId: number }) {
         { label: '耗时', value: formatDuration(run.startedAt, run.finishedAt) },
         { label: '退出码', value: run.exitCode === null ? '-' : String(run.exitCode) },
         { label: '触发方式', value: TRIGGER_LABELS[run.trigger] ?? run.trigger },
+        ...(run.collectTaskName
+          ? [{ label: '采集任务', value: run.collectTaskName }]
+          : []),
         ...(run.retryAttempt > 0
           ? [{ label: '重试次数', value: `第 ${run.retryAttempt} 次重试` }]
           : []),

@@ -90,6 +90,7 @@ export default function RunsPage() {
     {
       title: '操作',
       width: 110,
+      fixed: 'right',
       render: (_, run) => <RunDetailLink runId={run.id} />,
     },
   ]
@@ -150,7 +151,7 @@ export default function RunsPage() {
           columns={columns}
           data={runsQuery.data?.items ?? []}
           loading={runsQuery.isLoading}
-          scroll={{ y: tableHeight }}
+          scroll={{ x: 980, y: tableHeight }}
           pagination={{
             current: runsQuery.data?.page ?? 1,
             pageSize: runsQuery.data?.pageSize ?? 20,
