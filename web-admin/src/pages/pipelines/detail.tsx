@@ -54,6 +54,7 @@ import {
   triggerLabel,
 } from './helpers'
 import TransformEditor from './transforms'
+import { SchedulePanel } from '../schedules'
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback
@@ -72,6 +73,7 @@ function PipelineDetailView({ pipelineId }: { pipelineId: number }) {
   const navigate = useNavigate()
   const pipelineQuery = usePipeline(pipelineId)
   const runMutation = useRunPipeline(pipelineId)
+  const queueMutation = useRunPipeline(pipelineId)
   const [tab, setTab] = useState('overview')
   const [actionError, setActionError] = useState('')
   const pipeline = pipelineQuery.data
@@ -88,13 +90,14 @@ function PipelineDetailView({ pipelineId }: { pipelineId: number }) {
     )
   }
 
-  const runLatest = async () => {
+  const runLatest = async (queued = false) => {
     setActionError('')
     try {
-      const run = await runMutation.mutateAsync()
+      const mutation = queued ? queueMutation : runMutation
+      const run = await mutation.mutateAsync(queued ? { blocking: 'queue' } : undefined)
       navigate(`/pipeline-runs/${run.id}`)
     } catch (err) {
-      setActionError(errorMessage(err, '启动运行失败'))
+      setActionError(errorMessage(err, queued ? '排队运行失败' : '启动运行失败'))
     }
   }
 
@@ -133,11 +136,19 @@ function PipelineDetailView({ pipelineId }: { pipelineId: number }) {
           <Space>
             {pipeline.latestVersion ? <Tag color="green">已发布</Tag> : <Tag>草稿</Tag>}
             <Button
+              icon={<IconPlayArrow />}
+              loading={queueMutation.isPending}
+              disabled={!pipeline.latestVersion}
+              onClick={() => void runLatest(true)}
+            >
+              排队运行
+            </Button>
+            <Button
               type="primary"
               icon={<IconPlayArrow />}
               loading={runMutation.isPending}
               disabled={!pipeline.latestVersion}
-              onClick={runLatest}
+              onClick={() => void runLatest()}
             >
               运行最新版本
             </Button>
@@ -173,7 +184,7 @@ function PipelineDetailView({ pipelineId }: { pipelineId: number }) {
             <VersionsTab pipelineId={pipeline.id} onRestored={() => setTab('draft')} />
           </Tabs.TabPane>
           <Tabs.TabPane key="schedules" title="调度">
-            <Empty description="调度将在下一票接入；当前可手动运行最新发布版本。" />
+            <SchedulePanel pipelineId={pipeline.id} embedded />
           </Tabs.TabPane>
           <Tabs.TabPane key="runs" title="运行">
             <RunsTab pipelineId={pipeline.id} />

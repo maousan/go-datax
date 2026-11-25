@@ -35,6 +35,8 @@ const TRIGGER_LABELS: Record<string, string> = {
   manual: '手动',
   rerun: '重跑',
   diagnostic: '诊断',
+  schedule: '定时调度',
+  retry: '失败重试',
 }
 
 export function triggerLabel(trigger: string): string {

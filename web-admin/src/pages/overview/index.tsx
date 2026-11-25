@@ -52,6 +52,7 @@ import styles from './style/index.module.less'
 const { Row, Col } = Grid
 
 const STATUS_META: Record<Run['status'], { label: string; color: string }> = {
+  queued: { label: '排队中', color: '#FF7D00' },
   succeeded: { label: '成功', color: '#00B42A' },
   failed: { label: '失败', color: '#F53F3F' },
   running: { label: '运行中', color: '#165DFF' },

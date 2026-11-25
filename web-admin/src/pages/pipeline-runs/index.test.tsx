@@ -28,6 +28,7 @@ const run: PipelineRun = {
   id: 9,
   pipelineId: 1,
   versionId: 3,
+  scheduleId: null,
   versionNumber: 1,
   pipelineName: 'ui-pipeline',
   status: 'succeeded',
@@ -38,6 +39,7 @@ const run: PipelineRun = {
   writeRecords: 3,
   readBytes: 0,
   errorSummary: '',
+  retryAttempt: 0,
   createdAt: '',
 }
 

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import type { RunStatus } from '../api/runs'
 
 const LABELS: Record<RunStatus, string> = {
+  queued: '排队中',
   running: '运行中',
   succeeded: '成功',
   failed: '失败',
@@ -11,6 +12,7 @@ const LABELS: Record<RunStatus, string> = {
 }
 
 const COLORS: Record<RunStatus, string> = {
+  queued: 'orange',
   running: 'blue',
   succeeded: 'green',
   failed: 'red',

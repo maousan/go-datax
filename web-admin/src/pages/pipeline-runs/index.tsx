@@ -26,6 +26,7 @@ import { formatCount, formatDuration, formatTime } from '../../utils/format'
 import { triggerLabel } from '../pipelines/helpers'
 
 const STATUS_OPTIONS = [
+  { value: 'queued', label: '排队中' },
   { value: 'running', label: '运行中' },
   { value: 'succeeded', label: '成功' },
   { value: 'failed', label: '失败' },

@@ -41,6 +41,7 @@ export const menuRoutes: MenuRoute[] = [
     children: [
       { key: 'pipelines', name: 'Pipelines', path: '/pipelines' },
       { key: 'sources', name: '源与目标', path: '/sources' },
+      { key: 'schedules', name: '调度', path: '/schedules' },
       { key: 'pipeline-runs', name: '运行记录', path: '/pipeline-runs' },
     ],
   },
@@ -93,7 +94,7 @@ export function selectedMenuKey(pathname: string): string {
 export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
   if (pathname.startsWith('/data-sources') || pathname.startsWith('/datasets') || pathname.startsWith('/sync-jobs') || pathname.startsWith('/collect-tasks')) return ['data']
-  if (pathname.startsWith('/sources') || pathname.startsWith('/pipelines') || pathname.startsWith('/pipeline-runs')) return ['etl']
+  if (pathname.startsWith('/sources') || pathname.startsWith('/pipelines') || pathname.startsWith('/pipeline-runs') || pathname.startsWith('/schedules')) return ['etl']
   if (pathname.startsWith('/runs') || pathname.startsWith('/monitor')) return ['operations']
   if (pathname.startsWith('/alerts')) return ['alerts']
   return []

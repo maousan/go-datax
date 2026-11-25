@@ -58,7 +58,8 @@ describe('pipeline helpers', () => {
   it('labels run triggers', () => {
     expect(triggerLabel('manual')).toBe('手动')
     expect(triggerLabel('rerun')).toBe('重跑')
-    expect(triggerLabel('schedule')).toBe('schedule')
+    expect(triggerLabel('schedule')).toBe('定时调度')
+    expect(triggerLabel('retry')).toBe('失败重试')
   })
 
   it('creates default transform steps from the input schema', () => {

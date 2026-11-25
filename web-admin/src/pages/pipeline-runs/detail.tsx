@@ -48,8 +48,10 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
   const [follow, setFollow] = useState(true)
   const logRef = useRef<HTMLPreElement>(null)
   const run = runQuery.data
+  const queued = run?.status === 'queued'
 
   useEffect(() => {
+    if (queued) return
     const controller = new AbortController()
     let ended = false
     let offset = 0
@@ -88,7 +90,7 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
     }
     void connect()
     return () => controller.abort()
-  }, [runId, queryClient])
+  }, [runId, queued, queryClient])
 
   useEffect(() => {
     const element = logRef.current
@@ -184,7 +186,7 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
         }
         extra={
           <Space>
-            {status === 'running' ? (
+            {status === 'running' || status === 'queued' ? (
               <Button
                 type="primary"
                 status="danger"
@@ -192,7 +194,7 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
                 loading={cancelMutation.isPending}
                 onClick={() => void handleCancel()}
               >
-                停止
+                {status === 'queued' ? '取消排队' : '停止'}
               </Button>
             ) : null}
             {status === 'failed' ? (

@@ -70,6 +70,7 @@ export interface PipelineRun {
   id: number
   pipelineId: number | null
   versionId: number | null
+  scheduleId: number | null
   versionNumber: number
   pipelineName: string
   status: PipelineRunStatus
@@ -80,6 +81,7 @@ export interface PipelineRun {
   writeRecords: number
   readBytes: number
   errorSummary: string
+  retryAttempt: number
   createdAt: string
 }
 
@@ -209,7 +211,11 @@ export function usePipelineRuns(filters: PipelineRunFilters) {
     queryKey: ['pipeline-runs', filters],
     queryFn: () => apiGet<PipelineRunList>(`/api/v1/pipeline-runs?${runQuery(filters)}`),
     refetchInterval: (query) =>
-      query.state.data?.items.some((run) => run.status === 'running') ? 2000 : false,
+      query.state.data?.items.some(
+        (run) => run.status === 'running' || run.status === 'queued',
+      )
+        ? 2000
+        : false,
   })
 }
 
@@ -219,7 +225,9 @@ export function usePipelineRun(id: number) {
     queryFn: () => apiGet<PipelineRun>(`/api/v1/pipeline-runs/${id}`),
     enabled: Number.isFinite(id) && id > 0,
     refetchInterval: (query) =>
-      query.state.data?.status === 'running' ? 2000 : false,
+      query.state.data?.status === 'running' || query.state.data?.status === 'queued'
+        ? 2000
+        : false,
   })
 }
 
@@ -262,7 +270,11 @@ export function usePublishPipeline(id: number) {
 export function useRunPipeline(id: number) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => apiPost<PipelineRun>(`/api/v1/pipelines/${id}/runs`, {}),
+    mutationFn: (options?: { blocking?: 'queue' }) =>
+      apiPost<PipelineRun>(
+        `/api/v1/pipelines/${id}/runs${options?.blocking ? `?blocking=${options.blocking}` : ''}`,
+        {},
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pipeline', id] })
       queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })

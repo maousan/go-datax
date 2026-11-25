@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getToken } from '../auth/storage'
 import { ApiError, apiGet, apiPost } from './client'
 
-export type RunStatus = 'running' | 'succeeded' | 'failed' | 'canceled'
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
 
 export interface RunProgress {
   percent: number

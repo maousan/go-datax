@@ -16,6 +16,7 @@ import PipelineDetailPage from './pages/pipelines/detail'
 import PipelinesPage from './pages/pipelines'
 import QueryTemplatesPage from './pages/query-templates'
 import QueryTemplateWizardPage from './pages/query-templates/wizard'
+import SchedulesPage from './pages/schedules'
 import RunDetailPage from './pages/runs/detail'
 import RunsPage from './pages/runs'
 import SettingsPage from './pages/settings'
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="sync-jobs" element={<SyncJobsPage />} />
         <Route path="sync-jobs/:id" element={<SyncJobDetailPage />} />
         <Route path="sources" element={<EndpointsPage />} />
+        <Route path="schedules" element={<SchedulesPage />} />
         <Route path="pipelines" element={<PipelinesPage />} />
         <Route path="pipelines/:id" element={<PipelineDetailPage />} />
         <Route path="pipeline-runs" element={<PipelineRunsPage />} />
