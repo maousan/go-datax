@@ -248,6 +248,19 @@ docker run --rm -v $(pwd)/config.json:/config.json ghcr.io/longkeyy/go-datax:lat
 
 **总计**: 21种数据源，42个Reader/Writer插件
 
+## 🧪 测试
+
+```bash
+# Go
+go test ./...
+
+# Web 管理台
+pnpm --dir web-admin install
+pnpm --dir web-admin test
+```
+
+CI 默认只跑不依赖外部数据库的测试。MySQL/PostgreSQL 的 connector conformance 通过环境变量 DSN 启用；没有 DSN 时相关用例自动跳过。
+
 ## 📖 文档
 
 ### 用户文档
