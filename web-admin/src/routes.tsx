@@ -38,7 +38,10 @@ export const menuRoutes: MenuRoute[] = [
     key: 'etl',
     name: 'ETL',
     icon: IconSwap,
-    children: [{ key: 'sources', name: '源与目标', path: '/sources' }],
+    children: [
+      { key: 'pipelines', name: 'Pipelines', path: '/pipelines' },
+      { key: 'sources', name: '源与目标', path: '/sources' },
+    ],
   },
   {
     key: 'operations',
@@ -79,6 +82,7 @@ export function flattenMenuRoutes(routes: MenuRoute[] = menuRoutes): MenuRoute[]
 }
 
 export function selectedMenuKey(pathname: string): string {
+  if (pathname.startsWith('/pipeline-runs')) return '/pipelines'
   const matches = flattenMenuRoutes()
     .filter((route) => route.path && route.path !== '/' && pathname.startsWith(route.path))
     .sort((a, b) => (b.path?.length ?? 0) - (a.path?.length ?? 0))
@@ -88,7 +92,7 @@ export function selectedMenuKey(pathname: string): string {
 export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
   if (pathname.startsWith('/data-sources') || pathname.startsWith('/datasets') || pathname.startsWith('/sync-jobs') || pathname.startsWith('/collect-tasks')) return ['data']
-  if (pathname.startsWith('/sources')) return ['etl']
+  if (pathname.startsWith('/sources') || pathname.startsWith('/pipelines') || pathname.startsWith('/pipeline-runs')) return ['etl']
   if (pathname.startsWith('/runs') || pathname.startsWith('/monitor')) return ['operations']
   if (pathname.startsWith('/alerts')) return ['alerts']
   return []
@@ -111,6 +115,8 @@ export function breadcrumbFor(pathname: string): string[] {
   }
   if (pathname.startsWith('/data-sources/')) return ['数据管理', '数据源', '数据源详情']
   if (pathname.startsWith('/sync-jobs/')) return ['数据管理', 'datax任务', '任务详情']
+  if (pathname.startsWith('/pipelines/')) return ['ETL', 'Pipelines', 'Pipeline 详情']
+  if (pathname.startsWith('/pipeline-runs/')) return ['ETL', 'Pipelines', '运行详情']
   if (pathname.startsWith('/runs/')) return ['运行中心', '运行历史', '运行详情']
   const groups = findGroup(pathname)
   const leaf = flattenMenuRoutes().find((route) => route.path === pathname)
