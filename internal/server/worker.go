@@ -299,19 +299,17 @@ func (s *workerSupervisor) failActiveRuns(summary string) {
 		s.runs[id] = run
 		failed = append(failed, failedRun{pipelineRunID: run.pipelineRunID})
 	}
+	if s.store != nil {
+		for _, run := range failed {
+			if run.pipelineRunID == 0 {
+				continue
+			}
+			if err := s.store.FinishPipelineRun(run.pipelineRunID, store.PipelineRunStatusFailed, summary); err != nil {
+				log.Printf("更新 PipelineRun #%d 失败: %v", run.pipelineRunID, err)
+			}
+		}
+	}
 	s.mu.Unlock()
-
-	if s.store == nil {
-		return
-	}
-	for _, run := range failed {
-		if run.pipelineRunID == 0 {
-			continue
-		}
-		if err := s.store.FinishPipelineRun(run.pipelineRunID, store.PipelineRunStatusFailed, summary); err != nil {
-			log.Printf("更新 PipelineRun #%d 失败: %v", run.pipelineRunID, err)
-		}
-	}
 }
 
 func (s *workerSupervisor) spawn() error {
