@@ -159,3 +159,8 @@ func estimateRowBytes(row []any) int64 {
 func SchemasEqual(left, right Schema) bool {
 	return schemaEqual(left, right)
 }
+
+// CoerceValue converts a value to a canonical column type.
+func CoerceValue(value any, dataType DataType) (any, error) {
+	return coerceValue(value, dataType)
+}
