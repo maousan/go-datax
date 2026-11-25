@@ -4,4 +4,4 @@
 
 **Considered Options**: 嵌入引擎（少一层进程管理，但需重构入口且故障不隔离）；常驻 worker 池加队列（能力更强，但 MVP 阶段明显过度设计）。
 
-**Consequences**: 服务端必须管理进程生命周期、取消时杀进程树、重启时把残留的 `running` 记录标记为 `failed`；部署时 `datax` 与 `datax-server` 两个二进制必须同时存在。
+**Consequences**: 服务端必须管理进程生命周期、取消时杀进程树、重启时把残留的 `running` 记录标记为 `failed`；部署时 `datax` 与 `datax-server`（现名 `etl-server`）两个二进制必须同时存在。

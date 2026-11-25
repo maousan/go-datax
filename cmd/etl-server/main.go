@@ -46,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("ETL Admin Server %s\n", Version)
+		fmt.Printf("etl-server %s\n", Version)
 		return
 	}
 

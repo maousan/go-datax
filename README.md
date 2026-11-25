@@ -319,7 +319,7 @@ go build -o dist/etl-server ./cmd/etl-server
 - 数据目录包含凭据与运行快照，建议仅在本机使用并保持目录权限
 - 旧版 SQL Server 若只支持 TLS 1.0，可在连接地址追加 `;encrypt=disable`
 
-更多设计与术语见 [GLOSSARY.md](GLOSSARY.md)、[架构决策](docs/adr/) 与 [管理台规格](.scratch/etl-admin/spec.md)。
+更多设计与术语见 [GLOSSARY.md](GLOSSARY.md)、[架构决策](docs/adr/) 与 [ETL 平台 Spec](https://github.com/maousan/go-datax/issues/14)。
 
 ## 🤝 贡献
 

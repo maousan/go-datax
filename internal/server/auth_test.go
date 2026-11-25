@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestInitializeAuthGeneratesAndPersistsCredentials(t *testing.T) {
@@ -212,5 +214,49 @@ func TestConfigFileIsNotWorldReadableAfterSave(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		t.Errorf("config permissions = %v, want no group/other access", info.Mode().Perm())
+	}
+}
+
+func TestTokenIssuerIsEtlServer(t *testing.T) {
+	auth := AuthConfig{
+		JWTSecret: strings.Repeat("s", minJWTSecretBytes),
+		TokenTTL:  "1h",
+	}
+	svc, err := NewTokenService(auth)
+	if err != nil {
+		t.Fatalf("NewTokenService() failed: %v", err)
+	}
+
+	token, _, err := svc.Issue("admin")
+	if err != nil {
+		t.Fatalf("Issue() failed: %v", err)
+	}
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, &jwt.RegisteredClaims{})
+	if err != nil {
+		t.Fatalf("ParseUnverified() failed: %v", err)
+	}
+	claims, ok := parsed.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		t.Fatalf("claims type = %T, want *jwt.RegisteredClaims", parsed.Claims)
+	}
+	if claims.Issuer != "etl-server" {
+		t.Errorf("issuer = %q, want etl-server", claims.Issuer)
+	}
+	if _, err := svc.Parse(token); err != nil {
+		t.Errorf("Parse() rejected a current token: %v", err)
+	}
+
+	legacyClaims := jwt.RegisteredClaims{
+		Subject:   "admin",
+		Issuer:    "datax-server",
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	legacy, err := jwt.NewWithClaims(jwt.SigningMethodHS256, legacyClaims).SignedString([]byte(auth.JWTSecret))
+	if err != nil {
+		t.Fatalf("sign legacy token: %v", err)
+	}
+	if _, err := svc.Parse(legacy); err == nil {
+		t.Fatal("expected legacy datax-server token to be rejected")
 	}
 }
