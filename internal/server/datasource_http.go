@@ -150,6 +150,18 @@ func (s *Server) handleUpdateDataSource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if merged.Type != existing.Type {
+		endpoints, err := s.dataStore.EndpointsUsingDataSource(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "检查源与目标引用失败")
+			return
+		}
+		if len(endpoints) > 0 {
+			writeError(w, http.StatusConflict, "data_source_in_use",
+				"该数据源被 ETL 源或目标引用，不能修改类型")
+			return
+		}
+	}
 	if err := s.dataStore.UpdateDataSource(&merged); err != nil {
 		if errors.Is(err, store.ErrDuplicateDataSourceName) {
 			writeError(w, http.StatusConflict, "duplicate_name", "数据源名称已存在")
@@ -178,6 +190,12 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal_error", "检查数据集引用失败")
 		return
 	}
+	endpoints, err := s.dataStore.EndpointsUsingDataSource(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查源与目标引用失败")
+		return
+	}
+	var groups []string
 	if len(names) > 0 || len(templates) > 0 {
 		var dataxParts []string
 		if len(names) > 0 {
@@ -190,8 +208,28 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 			}
 			dataxParts = append(dataxParts, "数据集："+strings.Join(templateNames, "、"))
 		}
-		groups := []string{"DataX 区：" + strings.Join(dataxParts, "；")}
-		// Pipeline 区的引用检查在控制面接入后追加。
+		groups = append(groups, "DataX 区："+strings.Join(dataxParts, "；"))
+	}
+	if len(endpoints) > 0 {
+		var sources, sinks []string
+		for _, endpoint := range endpoints {
+			if endpoint.Kind == store.EndpointKindSource {
+				sources = append(sources, endpoint.Name)
+			} else {
+				sinks = append(sinks, endpoint.Name)
+			}
+		}
+		var etlParts []string
+		if len(sources) > 0 {
+			etlParts = append(etlParts, "源："+strings.Join(sources, "、"))
+		}
+		if len(sinks) > 0 {
+			etlParts = append(etlParts, "目标："+strings.Join(sinks, "、"))
+		}
+		groups = append(groups, "ETL 区："+strings.Join(etlParts, "；"))
+	}
+	if len(groups) > 0 {
+		// Pipeline 版本保存 Source/Sink 快照，不阻塞删除。
 		writeError(w, http.StatusConflict, "data_source_in_use",
 			"该数据源被以下配置引用："+strings.Join(groups, "；"))
 		return

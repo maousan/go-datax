@@ -160,6 +160,9 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("GET /api/v1/data-sources/{id}/rows", s.handleDataSourceRows)
 	protected.HandleFunc("POST /api/v1/data-sources/{id}/query", s.handleDataSourceQuery)
 
+	s.registerEndpointRoutes(protected, store.EndpointKindSource, "/api/v1/sources")
+	s.registerEndpointRoutes(protected, store.EndpointKindSink, "/api/v1/sinks")
+
 	protected.HandleFunc("GET /api/v1/datax/datasets", s.handleListQueryTemplates)
 	protected.HandleFunc("POST /api/v1/datax/datasets", s.handleCreateQueryTemplate)
 	protected.HandleFunc("/api/v1/datax/datasets", methodNotAllowed("GET, POST"))

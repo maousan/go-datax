@@ -48,6 +48,12 @@ All notable changes to this project will be documented in this file.
   - DataSource 由类型 + connector 专用 Properties 驱动，JDBC URL 对非 JDBC 类型变为可选
   - 新增 `filesystem` 类型（可复用根目录），支持目录连接测试；数据库浏览接口对文件系统返回明确错误
   - 数据源向导按类型分支：文件系统只填写根目录，数据库仍保留 URL/参数/TLS；类型选择与详情页同步适配
+- **Source/Sink 定义与本地连接器**:
+  - 新增顶层 `/api/v1/sources`、`/api/v1/sinks` CRUD、schema 自动发现与引用检查；Source/Sink 按连接器绑定 SQLite 或文件系统 DataSource
+  - 首批 batch-native 连接器：SQLite、CSV、TXT、JSONL；显式 canonical schema（int64/float64/decimal/string/bytes/bool/timestamp/null）
+  - SQLite 按数值主键并行分片读取；文件连接器支持表头、分隔符、空值标记与相对根目录路径校验
+  - 写入支持 insert 与 truncate；schema 不匹配、值转换失败和写入错误均 fail-fast，错误带行号
+  - 新增 ETL 菜单「源与目标」页面（源/目标 tab），可创建、编辑、删除并一键发现字段；DataSource 删除与类型变更会检查 ETL 引用
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook
