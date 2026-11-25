@@ -29,6 +29,7 @@ import {
   type AlertLogEvent,
   type AlertLogFilters,
   type AlertLogStatus,
+  type AlertSourceKind,
 } from '../../api/alerts'
 import { ApiError } from '../../api/client'
 import useFillHeight from '../../hooks/useFillHeight'
@@ -41,6 +42,11 @@ const EVENT_META: Record<AlertLogEvent, { label: string; color: string }> = {
   succeeded: { label: '成功', color: 'arcoblue' },
   canceled: { label: '取消', color: 'gray' },
   test: { label: '测试', color: 'purple' },
+}
+
+const SOURCE_META: Record<AlertSourceKind, { label: string; color: string }> = {
+  datax: { label: 'DataX', color: 'gray' },
+  pipeline: { label: 'ETL', color: 'arcoblue' },
 }
 
 const TYPE_META: Record<AlertChannelType, { label: string; color: string }> = {
@@ -62,6 +68,11 @@ const EVENT_OPTIONS = (Object.keys(EVENT_META) as AlertLogEvent[]).map((value) =
   label: EVENT_META[value].label,
 }))
 
+const SOURCE_OPTIONS = (Object.keys(SOURCE_META) as AlertSourceKind[]).map((value) => ({
+  value,
+  label: SOURCE_META[value].label,
+}))
+
 const TYPE_OPTIONS = (Object.keys(TYPE_META) as AlertChannelType[]).map((value) => ({
   value,
   label: TYPE_META[value].label,
@@ -73,6 +84,7 @@ const STATUS_OPTIONS = (Object.keys(STATUS_META) as AlertLogStatus[]).map((value
 }))
 
 interface AlertLogSearchValues {
+  sourceKind?: AlertSourceKind
   event?: AlertLogEvent
   status?: AlertLogStatus
   channelType?: AlertChannelType
@@ -98,6 +110,7 @@ export default function AlertLogsPage() {
     setFilters({
       page: 1,
       pageSize: filters.pageSize,
+      sourceKind: values.sourceKind,
       event: values.event,
       status: values.status,
       channelType: values.channelType,
@@ -138,10 +151,29 @@ export default function AlertLogsPage() {
       ),
     },
     {
+      title: '来源',
+      dataIndex: 'sourceKind',
+      width: 80,
+      render: (source: AlertSourceKind) => (
+        <Tag color={SOURCE_META[source]?.color}>{SOURCE_META[source]?.label ?? source}</Tag>
+      ),
+    },
+    {
       title: '任务',
-      width: 220,
+      width: 240,
       ellipsis: true,
       render: (_, log) => {
+        if (log.sourceKind === 'pipeline') {
+          const name = log.pipelineName || '-'
+          return log.pipelineRunId ? (
+            <Space size={4}>
+              <Link onClick={() => navigate(`/pipeline-runs/${log.pipelineRunId}`)}>{name}</Link>
+              {log.versionNumber > 0 ? <Tag>v{log.versionNumber}</Tag> : null}
+            </Space>
+          ) : (
+            name
+          )
+        }
         const name = log.syncJobName || log.collectTaskName
         if (!name) return '-'
         return log.runId > 0 ? (
@@ -206,6 +238,11 @@ export default function AlertLogsPage() {
         >
           <Grid.Row gutter={24}>
             <Grid.Col span={6}>
+              <Form.Item label="来源" field="sourceKind">
+                <Select allowClear placeholder="全部来源" options={SOURCE_OPTIONS} />
+              </Form.Item>
+            </Grid.Col>
+            <Grid.Col span={6}>
               <Form.Item label="事件" field="event">
                 <Select allowClear placeholder="全部事件" options={EVENT_OPTIONS} />
               </Form.Item>
@@ -220,17 +257,17 @@ export default function AlertLogsPage() {
                 <Select allowClear placeholder="全部渠道" options={TYPE_OPTIONS} />
               </Form.Item>
             </Grid.Col>
-            <Grid.Col span={6}>
+          </Grid.Row>
+          <Grid.Row gutter={24}>
+            <Grid.Col span={12}>
               <Form.Item label="关键字" field="query">
                 <Input
-                  placeholder="渠道或任务名称"
+                  placeholder="渠道、任务或 Pipeline 名称"
                   allowClear
                   onPressEnter={handleSearch}
                 />
               </Form.Item>
             </Grid.Col>
-          </Grid.Row>
-          <Grid.Row gutter={24}>
             <Grid.Col span={12}>
               <Form.Item label="发送时间" field="range">
                 <DatePicker.RangePicker

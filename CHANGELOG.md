@@ -91,6 +91,13 @@ All notable changes to this project will be documented in this file.
   - 新增 `/api/v1/pipeline-schedules`、`POST /api/v1/pipelines/{id}/schedules` CRUD；调度变更自动重载内存调度器
   - 新增 ETL「调度」页面与 Pipeline 详情「调度」tab，支持新增/编辑/启停/删除；Pipeline 详情新增「排队运行」
   - 服务停机期间错过的 cron 触发不补跑，恢复后从下一次计划时间继续
+- **告警来源标记与 Pipeline 事件**:
+  - `AlertLog` 新增 `source_kind` 与可空的 Pipeline/PipelineRun/版本字段；旧日志按 DataX 兼容，不迁移、不破坏
+  - Pipeline 运行结束发送 failed/succeeded/canceled/recovered 事件；失败但会自动重试时不提前告警，最终失败或重试成功才发送
+  - Pipeline webhook payload 带 `sourceKind`、Pipeline/版本/Run/trigger/schedule/读写行数；文本/邮件渠道补充 Pipeline、版本与触发方式
+  - 告警日志接口支持 `sourceKind=datax|pipeline` 筛选；DataX 旧日志归入 DataX
+  - 「告警日志」页新增来源筛选与来源列，Pipeline 记录可直接跳转运行详情
+  - 告警渠道配置与 DataX 告警行为保持不变
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

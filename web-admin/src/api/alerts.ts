@@ -4,6 +4,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from './client'
 export type AlertChannelType = 'email' | 'dingtalk' | 'feishu' | 'wecom' | 'slack' | 'webhook'
 export type AlertEvent = 'failed' | 'recovered' | 'succeeded' | 'canceled'
 export type AlertLogStatus = 'success' | 'failed'
+export type AlertSourceKind = 'datax' | 'pipeline'
 export type AlertLogEvent = AlertEvent | 'test'
 
 export interface AlertChannel {
@@ -32,6 +33,7 @@ export interface AlertConfig {
 
 export interface AlertLog {
   id: number
+  sourceKind: AlertSourceKind
   event: AlertLogEvent
   status: AlertLogStatus
   channelId: string
@@ -42,12 +44,17 @@ export interface AlertLog {
   syncJobName: string
   collectTaskId: number | null
   collectTaskName: string
+  pipelineId: number | null
+  pipelineName: string
+  pipelineRunId: number | null
+  versionNumber: number
   error: string
   durationMs: number
   createdAt: string
 }
 
 export interface AlertLogFilters {
+  sourceKind?: AlertSourceKind
   event?: AlertLogEvent
   status?: AlertLogStatus
   channelType?: AlertChannelType
@@ -100,6 +107,7 @@ export function useTestAlertChannel() {
 
 function alertLogQuery(filters: AlertLogFilters): string {
   const params = new URLSearchParams()
+  if (filters.sourceKind) params.set('sourceKind', filters.sourceKind)
   if (filters.event) params.set('event', filters.event)
   if (filters.status) params.set('status', filters.status)
   if (filters.channelType) params.set('channelType', filters.channelType)
