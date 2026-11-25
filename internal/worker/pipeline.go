@@ -8,21 +8,31 @@ import (
 	"sync/atomic"
 
 	"github.com/longkeyy/go-datax/internal/connector"
+	"github.com/longkeyy/go-datax/internal/transform"
 )
 
 const defaultPipelineMaxBytes = 16 << 20
 
 // normalizePipelineSpec validates the resolved endpoint snapshots and the
-// source/sink schema contract before the worker opens any connection.
+// source/transform/sink schema contract before the worker opens any connection.
 func normalizePipelineSpec(spec PipelineSpec) (PipelineSpec, error) {
+	if spec.TransformLibraryVersion == 0 {
+		spec.TransformLibraryVersion = transform.FunctionLibraryVersion
+	} else if spec.TransformLibraryVersion != transform.FunctionLibraryVersion {
+		return spec, fmt.Errorf("unsupported transform library version %d (worker supports %d)", spec.TransformLibraryVersion, transform.FunctionLibraryVersion)
+	}
 	if err := connector.ValidateSource(spec.Source.Config()); err != nil {
 		return spec, fmt.Errorf("source %q: %w", spec.Source.Name, err)
 	}
 	if err := connector.ValidateSink(spec.Sink.Config()); err != nil {
 		return spec, fmt.Errorf("sink %q: %w", spec.Sink.Name, err)
 	}
-	if !connector.SchemasEqual(spec.Source.Schema, spec.Sink.Schema) {
-		return spec, fmt.Errorf("source and sink schemas do not match")
+	preview, err := transform.Validate(spec.Source.Schema, spec.Transforms)
+	if err != nil {
+		return spec, fmt.Errorf("transform: %w", err)
+	}
+	if !connector.SchemasEqual(preview.OutputSchema, spec.Sink.Schema) {
+		return spec, fmt.Errorf("transform output schema does not match sink schema")
 	}
 	return spec, nil
 }
@@ -57,6 +67,10 @@ func RunPipeline(ctx context.Context, spec PipelineSpec, emit func(Event)) (RunS
 	if err != nil {
 		return fail(err)
 	}
+	transformer, _, err := transform.Prepare(spec.Source.Schema, spec.Transforms)
+	if err != nil {
+		return fail(fmt.Errorf("prepare transform: %w", err))
+	}
 	source, err := connector.NewSource(spec.Source.Config())
 	if err != nil {
 		return fail(fmt.Errorf("open source: %w", err))
@@ -69,6 +83,9 @@ func RunPipeline(ctx context.Context, spec PipelineSpec, emit func(Event)) (RunS
 
 	logf("源 %s（%s）", spec.Source.Name, spec.Source.Connector)
 	logf("目标 %s（%s）", spec.Sink.Name, spec.Sink.Connector)
+	if transformer.StepCount() > 0 {
+		logf("Transform 步骤数：%d", transformer.StepCount())
+	}
 	splits, err := source.Splits(ctx)
 	if err != nil {
 		_ = source.Close()
@@ -142,18 +159,33 @@ func RunPipeline(ctx context.Context, spec PipelineSpec, emit func(Event)) (RunS
 			budget.release(item.bytes)
 			continue
 		}
-		if err := sink.WriteBatch(runCtx, item.batch); err != nil {
-			budget.release(item.bytes)
-			errCh <- fmt.Errorf("split %q write: %w", item.split, err)
-			writerFailed = true
-			cancel()
-			continue
+		transformed := item.batch
+		if transformer.StepCount() > 0 {
+			var err error
+			transformed, err = transformer.Transform(item.batch)
+			if err != nil {
+				budget.release(item.bytes)
+				errCh <- fmt.Errorf("split %q transform: %w", item.split, err)
+				writerFailed = true
+				cancel()
+				continue
+			}
+		}
+		if len(transformed.Rows) > 0 {
+			if err := sink.WriteBatch(runCtx, transformed); err != nil {
+				budget.release(item.bytes)
+				errCh <- fmt.Errorf("split %q write: %w", item.split, err)
+				writerFailed = true
+				cancel()
+				continue
+			}
 		}
 		budget.release(item.bytes)
-		rows := int64(len(item.batch.Rows))
-		total := readRecords.Add(rows)
-		written := writeRecords.Add(rows)
-		taskRecords[item.index].Add(rows)
+		readRows := int64(len(item.batch.Rows))
+		writeRows := int64(len(transformed.Rows))
+		total := readRecords.Add(readRows)
+		written := writeRecords.Add(writeRows)
+		taskRecords[item.index].Add(readRows)
 		safeEmit(Event{
 			Type:         "progress",
 			ReadRecords:  total,

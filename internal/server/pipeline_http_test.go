@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/longkeyy/go-datax/internal/store"
+	"github.com/longkeyy/go-datax/internal/transform"
 )
 
 func newPipelineTestServer(t *testing.T) (*Server, http.Handler, *store.Store) {
@@ -231,6 +232,137 @@ func TestPipelineRunRetention(t *testing.T) {
 	}
 	if _, err := os.Stat(logs[2]); err != nil {
 		t.Fatalf("newest log missing: %v", err)
+	}
+}
+
+func TestPipelineTransformsPreviewAndRun(t *testing.T) {
+	_, handler, dataStore := newPipelineTestServer(t)
+	token := loginToken(t, handler, "admin", "secret")
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "source.csv"), []byte("id,name\n1,alice\n2,bob\n3,carol\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sinkPath := filepath.Join(t.TempDir(), "sink.db")
+	db, err := sql.Open("sqlite", sinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE dst2 (id INTEGER PRIMARY KEY, label TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	sourceID, sinkID := seedPipelineSourceAndSink(t, dataStore, base, "source.csv", sinkPath)
+	sink, err := dataStore.GetEndpoint(store.EndpointKindSink, sinkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.TableName = "dst2"
+	sink.SchemaJSON = `[{"name":"id","type":"int64"},{"name":"label","type":"string"}]`
+	if err := dataStore.UpdateEndpoint(&sink); err != nil {
+		t.Fatal(err)
+	}
+
+	transforms := []any{
+		map[string]any{
+			"type": "project",
+			"project": []any{
+				map[string]any{"name": "id", "type": "int64", "expr": "id"},
+				map[string]any{"name": "label", "type": "string", "expr": "upper(name)"},
+			},
+		},
+		map[string]any{"type": "filter", "condition": "id > 1"},
+	}
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/transform-preview", token, map[string]any{
+		"sourceId":   sourceID,
+		"transforms": transforms,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var preview transform.Preview
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Steps) != 2 || len(preview.OutputSchema) != 2 ||
+		preview.OutputSchema[1].Name != "label" {
+		t.Fatalf("preview = %+v", preview)
+	}
+
+	body := map[string]any{
+		"name":       "transform-pipeline",
+		"sourceId":   sourceID,
+		"sinkId":     sinkID,
+		"transforms": transforms,
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines", token, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var pipeline pipelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &pipeline); err != nil {
+		t.Fatal(err)
+	}
+	if len(pipeline.Transforms) != 2 || pipeline.TransformPreview == nil ||
+		len(pipeline.TransformPreview.OutputSchema) != 2 {
+		t.Fatalf("pipeline transforms = %+v preview = %+v", pipeline.Transforms, pipeline.TransformPreview)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/"+itoa(pipeline.ID)+"/publish", token, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("publish status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var version pipelineVersionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &version); err != nil {
+		t.Fatal(err)
+	}
+	if len(version.Transforms) != 2 || version.TransformLibraryVersion != transform.FunctionLibraryVersion {
+		t.Fatalf("version transforms = %+v library version = %d", version.Transforms, version.TransformLibraryVersion)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/"+itoa(pipeline.ID)+"/runs", token, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("run status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var run pipelineRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	run = waitPipelineRun(t, handler, token, run.ID)
+	if run.Status != store.PipelineRunStatusSucceeded || run.ReadRecords != 3 || run.WriteRecords != 2 {
+		t.Fatalf("run = %+v", run)
+	}
+	db, err = sql.Open("sqlite", sinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT id, label FROM dst2 ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var id int
+		var label string
+		if err := rows.Scan(&id, &label); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%d:%s", id, label))
+	}
+	if strings.Join(got, ",") != "2:BOB,3:CAROL" {
+		t.Fatalf("target rows = %v", got)
+	}
+
+	invalid := map[string]any{
+		"name":       "invalid-transform",
+		"sourceId":   sourceID,
+		"sinkId":     sinkID,
+		"transforms": []any{map[string]any{"type": "filter", "condition": "missing > 1"}},
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines", token, invalid)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing") {
+		t.Fatalf("invalid transform status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -638,5 +770,40 @@ func TestPipelinePublishRunAndDraftIsolation(t *testing.T) {
 	}
 	if changed.DraftVersionNumber != 0 || changed.Source == nil || changed.Source.Name != "pipeline-csv-2" {
 		t.Fatalf("draft snapshot was not cleared: %+v", changed)
+	}
+}
+
+func TestPipelineResponseKeepsStaleTransformDraftReadable(t *testing.T) {
+	pipeline := store.Pipeline{
+		ID:             1,
+		Name:           "stale-transform",
+		SourceID:       11,
+		SinkID:         12,
+		TransformsJSON: `[{"type":"filter","condition":"missing > 1"}]`,
+	}
+	source := store.Endpoint{
+		ID:         11,
+		Kind:       store.EndpointKindSource,
+		Name:       "source",
+		Connector:  "csv",
+		SchemaJSON: `[{"name":"id","type":"int64"}]`,
+	}
+	sink := store.Endpoint{
+		ID:         12,
+		Kind:       store.EndpointKindSink,
+		Name:       "sink",
+		Connector:  "sqlite",
+		SchemaJSON: `[{"name":"id","type":"int64"}]`,
+	}
+
+	response, err := pipelineResponseFrom(pipeline, source, sink, "files", "db", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("pipelineResponseFrom() failed: %v", err)
+	}
+	if response.TransformPreview != nil {
+		t.Fatalf("TransformPreview = %+v, want nil", response.TransformPreview)
+	}
+	if len(response.Transforms) != 1 {
+		t.Fatalf("transforms = %+v", response.Transforms)
 	}
 }

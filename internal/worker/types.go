@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/longkeyy/go-datax/internal/connector"
+	"github.com/longkeyy/go-datax/internal/transform"
 )
 
 // RunStatus is the lifecycle state of a worker run.
@@ -39,10 +40,12 @@ type RunSpec struct {
 	Pipeline        *PipelineSpec `json:"pipeline,omitempty"`
 }
 
-// PipelineSpec is one resolved linear source → sink execution.
+// PipelineSpec is one resolved linear source → transforms → sink execution.
 type PipelineSpec struct {
-	Source EndpointSpec `json:"source"`
-	Sink   EndpointSpec `json:"sink"`
+	Source                  EndpointSpec     `json:"source"`
+	Transforms              []transform.Step `json:"transforms,omitempty"`
+	TransformLibraryVersion int              `json:"transformLibraryVersion,omitempty"`
+	Sink                    EndpointSpec     `json:"sink"`
 }
 
 // EndpointSpec is a resolved Source/Sink definition, including the DataSource

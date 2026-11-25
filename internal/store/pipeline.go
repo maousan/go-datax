@@ -21,6 +21,7 @@ type Pipeline struct {
 	Description        string `gorm:"size:500"`
 	SourceID           int64  `gorm:"index;not null"`
 	SinkID             int64  `gorm:"index;not null"`
+	TransformsJSON     string `gorm:"column:transforms_json;type:text"`
 	DraftSourceJSON    string `gorm:"column:draft_source_json;type:text"`
 	DraftSinkJSON      string `gorm:"column:draft_sink_json;type:text"`
 	DraftVersionID     *int64 `gorm:"column:draft_version_id"`
@@ -31,19 +32,21 @@ type Pipeline struct {
 
 // PipelineVersion is an immutable published snapshot.
 type PipelineVersion struct {
-	ID                 int64  `gorm:"primaryKey"`
-	PipelineID         int64  `gorm:"not null;uniqueIndex:idx_pipeline_version"`
-	VersionNumber      int    `gorm:"not null;uniqueIndex:idx_pipeline_version"`
-	SourceEndpointID   int64  `gorm:"index"`
-	SinkEndpointID     int64  `gorm:"index"`
-	SourceDataSourceID int64  `gorm:"index"`
-	SinkDataSourceID   int64  `gorm:"index"`
-	SourceName         string `gorm:"size:100"`
-	SinkName           string `gorm:"size:100"`
-	Summary            string `gorm:"size:300"`
-	SourceJSON         string `gorm:"type:text;not null"`
-	SinkJSON           string `gorm:"type:text;not null"`
-	CreatedAt          time.Time
+	ID                      int64  `gorm:"primaryKey"`
+	PipelineID              int64  `gorm:"not null;uniqueIndex:idx_pipeline_version"`
+	VersionNumber           int    `gorm:"not null;uniqueIndex:idx_pipeline_version"`
+	SourceEndpointID        int64  `gorm:"index"`
+	SinkEndpointID          int64  `gorm:"index"`
+	SourceDataSourceID      int64  `gorm:"index"`
+	SinkDataSourceID        int64  `gorm:"index"`
+	SourceName              string `gorm:"size:100"`
+	SinkName                string `gorm:"size:100"`
+	Summary                 string `gorm:"size:300"`
+	SourceJSON              string `gorm:"type:text;not null"`
+	SinkJSON                string `gorm:"type:text;not null"`
+	TransformsJSON          string `gorm:"column:transforms_json;type:text"`
+	TransformLibraryVersion int    `gorm:"not null;default:0"`
+	CreatedAt               time.Time
 }
 
 // ListPipelines returns pipelines ordered by name.

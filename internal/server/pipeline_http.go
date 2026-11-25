@@ -14,14 +14,22 @@ import (
 
 	"github.com/longkeyy/go-datax/internal/connector"
 	"github.com/longkeyy/go-datax/internal/store"
+	"github.com/longkeyy/go-datax/internal/transform"
 	"github.com/longkeyy/go-datax/internal/worker"
 )
 
 type pipelineRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	SourceID    int64  `json:"sourceId"`
-	SinkID      int64  `json:"sinkId"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	SourceID    int64            `json:"sourceId"`
+	SinkID      int64            `json:"sinkId"`
+	Transforms  []transform.Step `json:"transforms"`
+}
+
+type transformPreviewRequest struct {
+	SourceID     int64            `json:"sourceId"`
+	SourceSchema connector.Schema `json:"sourceSchema"`
+	Transforms   []transform.Step `json:"transforms"`
 }
 
 type pipelineEndpointSummary struct {
@@ -53,6 +61,8 @@ type pipelineResponse struct {
 	SinkID             int64                    `json:"sinkId"`
 	Source             *pipelineEndpointSummary `json:"source"`
 	Sink               *pipelineEndpointSummary `json:"sink"`
+	Transforms         []transform.Step         `json:"transforms"`
+	TransformPreview   *transform.Preview       `json:"transformPreview"`
 	DraftVersionNumber int                      `json:"draftVersionNumber"`
 	LatestVersion      *pipelineVersionSummary  `json:"latestVersion"`
 	LastRun            *pipelineRunResponse     `json:"lastRun"`
@@ -74,15 +84,17 @@ type pipelineEndpointSnapshot struct {
 }
 
 type pipelineVersionResponse struct {
-	ID            int64                    `json:"id"`
-	PipelineID    int64                    `json:"pipelineId"`
-	VersionNumber int                      `json:"versionNumber"`
-	SourceName    string                   `json:"sourceName"`
-	SinkName      string                   `json:"sinkName"`
-	Summary       string                   `json:"summary"`
-	Source        pipelineEndpointSnapshot `json:"source"`
-	Sink          pipelineEndpointSnapshot `json:"sink"`
-	CreatedAt     string                   `json:"createdAt"`
+	ID                      int64                    `json:"id"`
+	PipelineID              int64                    `json:"pipelineId"`
+	VersionNumber           int                      `json:"versionNumber"`
+	SourceName              string                   `json:"sourceName"`
+	SinkName                string                   `json:"sinkName"`
+	Summary                 string                   `json:"summary"`
+	Source                  pipelineEndpointSnapshot `json:"source"`
+	Sink                    pipelineEndpointSnapshot `json:"sink"`
+	Transforms              []transform.Step         `json:"transforms"`
+	TransformLibraryVersion int                      `json:"transformLibraryVersion"`
+	CreatedAt               string                   `json:"createdAt"`
 }
 
 func (s pipelineEndpointSnapshot) connectorConfig(dataSource store.DataSource) connector.Config {
@@ -123,13 +135,54 @@ func normalizePipelineRequest(req pipelineRequest) (pipelineRequest, error) {
 	return req, nil
 }
 
-func buildPipelineSnapshot(endpoint store.Endpoint, dataSource store.DataSource) (pipelineEndpointSnapshot, error) {
+func decodeEndpointSchema(endpoint store.Endpoint) (connector.Schema, error) {
 	var schema connector.Schema
 	if err := json.Unmarshal([]byte(endpoint.SchemaJSON), &schema); err != nil {
-		return pipelineEndpointSnapshot{}, fmt.Errorf("解析字段失败: %w", err)
+		return nil, fmt.Errorf("解析字段失败: %w", err)
 	}
 	if err := schema.Validate(); err != nil {
-		return pipelineEndpointSnapshot{}, fmt.Errorf("字段定义不正确: %w", err)
+		return nil, fmt.Errorf("字段定义不正确: %w", err)
+	}
+	return schema, nil
+}
+
+func decodeTransforms(raw string) ([]transform.Step, error) {
+	if strings.TrimSpace(raw) == "" {
+		return []transform.Step{}, nil
+	}
+	var steps []transform.Step
+	if err := json.Unmarshal([]byte(raw), &steps); err != nil {
+		return nil, err
+	}
+	if steps == nil {
+		steps = []transform.Step{}
+	}
+	return steps, nil
+}
+
+func encodeTransforms(steps []transform.Step) (string, error) {
+	if steps == nil {
+		steps = []transform.Step{}
+	}
+	data, err := json.Marshal(steps)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func validatePipelineTransforms(source store.Endpoint, steps []transform.Step) (transform.Preview, error) {
+	sourceSchema, err := decodeEndpointSchema(source)
+	if err != nil {
+		return transform.Preview{}, fmt.Errorf("源字段不正确: %w", err)
+	}
+	return transform.Validate(sourceSchema, steps)
+}
+
+func buildPipelineSnapshot(endpoint store.Endpoint, dataSource store.DataSource) (pipelineEndpointSnapshot, error) {
+	schema, err := decodeEndpointSchema(endpoint)
+	if err != nil {
+		return pipelineEndpointSnapshot{}, err
 	}
 	options := map[string]string{}
 	for key, value := range endpoint.Options {
@@ -208,16 +261,22 @@ func toPipelineVersionResponse(version store.PipelineVersion) (pipelineVersionRe
 	if err := json.Unmarshal([]byte(version.SinkJSON), &sink); err != nil {
 		return pipelineVersionResponse{}, err
 	}
+	transforms, err := decodeTransforms(version.TransformsJSON)
+	if err != nil {
+		return pipelineVersionResponse{}, err
+	}
 	return pipelineVersionResponse{
-		ID:            version.ID,
-		PipelineID:    version.PipelineID,
-		VersionNumber: version.VersionNumber,
-		SourceName:    version.SourceName,
-		SinkName:      version.SinkName,
-		Summary:       version.Summary,
-		Source:        source,
-		Sink:          sink,
-		CreatedAt:     version.CreatedAt.UTC().Format(time.RFC3339),
+		ID:                      version.ID,
+		PipelineID:              version.PipelineID,
+		VersionNumber:           version.VersionNumber,
+		SourceName:              version.SourceName,
+		SinkName:                version.SinkName,
+		Summary:                 version.Summary,
+		Source:                  source,
+		Sink:                    sink,
+		Transforms:              transforms,
+		TransformLibraryVersion: version.TransformLibraryVersion,
+		CreatedAt:               version.CreatedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -259,6 +318,26 @@ func pipelineResponseFrom(
 		}
 		response.Sink = &sinkSummary
 	}
+	transforms, err := decodeTransforms(pipeline.TransformsJSON)
+	if err != nil {
+		return response, err
+	}
+	response.Transforms = transforms
+	var input connector.Schema
+	if sourceSnapshot != nil {
+		input = sourceSnapshot.Schema
+	} else {
+		input, err = decodeEndpointSchema(source)
+		if err != nil {
+			return response, err
+		}
+	}
+	preview, err := transform.Validate(input, transforms)
+	if err == nil {
+		response.TransformPreview = &preview
+	}
+	// A draft can go stale when its source schema changes; keep the pipeline
+	// readable and let the transform preview surface the validation error.
 	if latest != nil {
 		summary := toPipelineVersionSummary(*latest)
 		response.LatestVersion = &summary
@@ -475,14 +554,25 @@ func (s *Server) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if !s.checkPipelineEndpoints(w, normalized.SourceID, normalized.SinkID) {
+	source, _, ok := s.loadPipelineEndpoints(w, normalized.SourceID, normalized.SinkID)
+	if !ok {
+		return
+	}
+	if _, err := validatePipelineTransforms(source, normalized.Transforms); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_transform", err.Error())
+		return
+	}
+	transformsJSON, err := encodeTransforms(normalized.Transforms)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "保存 Transform 失败")
 		return
 	}
 	pipeline := &store.Pipeline{
-		Name:        normalized.Name,
-		Description: normalized.Description,
-		SourceID:    normalized.SourceID,
-		SinkID:      normalized.SinkID,
+		Name:           normalized.Name,
+		Description:    normalized.Description,
+		SourceID:       normalized.SourceID,
+		SinkID:         normalized.SinkID,
+		TransformsJSON: transformsJSON,
 	}
 	if err := s.dataStore.CreatePipeline(pipeline); err != nil {
 		if errors.Is(err, store.ErrDuplicatePipelineName) {
@@ -525,7 +615,27 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if !s.checkPipelineEndpoints(w, normalized.SourceID, normalized.SinkID) {
+	source, _, ok := s.loadPipelineEndpoints(w, normalized.SourceID, normalized.SinkID)
+	if !ok {
+		return
+	}
+	if pipeline.SourceID == normalized.SourceID && strings.TrimSpace(pipeline.DraftSourceJSON) != "" {
+		var snapshot pipelineEndpointSnapshot
+		if err := json.Unmarshal([]byte(pipeline.DraftSourceJSON), &snapshot); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "读取草稿快照失败")
+			return
+		}
+		if _, err := transform.Validate(snapshot.Schema, normalized.Transforms); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_transform", err.Error())
+			return
+		}
+	} else if _, err := validatePipelineTransforms(source, normalized.Transforms); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_transform", err.Error())
+		return
+	}
+	transformsJSON, err := encodeTransforms(normalized.Transforms)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "保存 Transform 失败")
 		return
 	}
 	pipeline.Name = normalized.Name
@@ -538,6 +648,7 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	}
 	pipeline.SourceID = normalized.SourceID
 	pipeline.SinkID = normalized.SinkID
+	pipeline.TransformsJSON = transformsJSON
 	if err := s.dataStore.UpdatePipeline(&pipeline); err != nil {
 		if errors.Is(err, store.ErrDuplicatePipelineName) {
 			writeError(w, http.StatusConflict, "duplicate_name", "Pipeline 名称已存在")
@@ -554,24 +665,63 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) checkPipelineEndpoints(w http.ResponseWriter, sourceID, sinkID int64) bool {
-	if _, err := s.dataStore.GetEndpoint(store.EndpointKindSource, sourceID); err != nil {
+func (s *Server) loadPipelineEndpoints(w http.ResponseWriter, sourceID, sinkID int64) (store.Endpoint, store.Endpoint, bool) {
+	source, err := s.dataStore.GetEndpoint(store.EndpointKindSource, sourceID)
+	if err != nil {
 		if errors.Is(err, store.ErrEndpointNotFound) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "源不存在")
 		} else {
 			writeError(w, http.StatusInternalServerError, "internal_error", "读取源失败")
 		}
-		return false
+		return store.Endpoint{}, store.Endpoint{}, false
 	}
-	if _, err := s.dataStore.GetEndpoint(store.EndpointKindSink, sinkID); err != nil {
+	sink, err := s.dataStore.GetEndpoint(store.EndpointKindSink, sinkID)
+	if err != nil {
 		if errors.Is(err, store.ErrEndpointNotFound) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "目标不存在")
 		} else {
 			writeError(w, http.StatusInternalServerError, "internal_error", "读取目标失败")
 		}
-		return false
+		return store.Endpoint{}, store.Endpoint{}, false
 	}
-	return true
+	return source, sink, true
+}
+
+func (s *Server) handleTransformPreview(w http.ResponseWriter, r *http.Request) {
+	var req transformPreviewRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
+		return
+	}
+	if req.SourceID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "必须选择源")
+		return
+	}
+	var schema connector.Schema
+	if len(req.SourceSchema) > 0 {
+		schema = req.SourceSchema
+	} else {
+		source, err := s.dataStore.GetEndpoint(store.EndpointKindSource, req.SourceID)
+		if errors.Is(err, store.ErrEndpointNotFound) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "源不存在")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "读取源失败")
+			return
+		}
+		schema, err = decodeEndpointSchema(source)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	preview, err := transform.Validate(schema, req.Transforms)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_transform", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
 }
 
 func (s *Server) handlePublishPipeline(w http.ResponseWriter, r *http.Request) {
@@ -638,8 +788,18 @@ func (s *Server) handlePublishPipeline(w http.ResponseWriter, r *http.Request) {
 		}
 		sinkSnapshot = &snapshot
 	}
-	if !connector.SchemasEqual(sourceSnapshot.Schema, sinkSnapshot.Schema) {
-		writeError(w, http.StatusUnprocessableEntity, "schema_mismatch", "源与目标的字段不一致")
+	transforms, err := decodeTransforms(pipeline.TransformsJSON)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_pipeline", "Transform 配置无法解析")
+		return
+	}
+	preview, err := transform.Validate(sourceSnapshot.Schema, transforms)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_transform", err.Error())
+		return
+	}
+	if !connector.SchemasEqual(preview.OutputSchema, sinkSnapshot.Schema) {
+		writeError(w, http.StatusUnprocessableEntity, "schema_mismatch", "Transform 输出字段与目标字段不一致")
 		return
 	}
 	if err := connector.ValidateSource(sourceSnapshot.connectorConfig(sourceDS)); err != nil {
@@ -669,16 +829,18 @@ func (s *Server) handlePublishPipeline(w http.ResponseWriter, r *http.Request) {
 		sinkEndpointID = sink.ID
 	}
 	version := &store.PipelineVersion{
-		PipelineID:         pipeline.ID,
-		SourceEndpointID:   sourceEndpointID,
-		SinkEndpointID:     sinkEndpointID,
-		SourceDataSourceID: sourceDS.ID,
-		SinkDataSourceID:   sinkDS.ID,
-		SourceName:         sourceSnapshot.Name,
-		SinkName:           sinkSnapshot.Name,
-		Summary:            sourceSnapshot.Name + " → " + sinkSnapshot.Name,
-		SourceJSON:         string(sourceJSON),
-		SinkJSON:           string(sinkJSON),
+		PipelineID:              pipeline.ID,
+		SourceEndpointID:        sourceEndpointID,
+		SinkEndpointID:          sinkEndpointID,
+		SourceDataSourceID:      sourceDS.ID,
+		SinkDataSourceID:        sinkDS.ID,
+		SourceName:              sourceSnapshot.Name,
+		SinkName:                sinkSnapshot.Name,
+		Summary:                 sourceSnapshot.Name + " → " + sinkSnapshot.Name,
+		SourceJSON:              string(sourceJSON),
+		SinkJSON:                string(sinkJSON),
+		TransformsJSON:          pipeline.TransformsJSON,
+		TransformLibraryVersion: transform.FunctionLibraryVersion,
 	}
 	if err := s.dataStore.CreatePipelineVersion(version); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "发布版本失败")
@@ -863,6 +1025,7 @@ func (s *Server) handleRestorePipelineVersion(w http.ResponseWriter, r *http.Req
 	pipeline.DraftSinkJSON = version.SinkJSON
 	pipeline.DraftVersionID = &version.ID
 	pipeline.DraftVersionNumber = version.VersionNumber
+	pipeline.TransformsJSON = version.TransformsJSON
 	if err := s.dataStore.UpdatePipeline(&pipeline); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "更新草稿失败")
 		return
@@ -1008,9 +1171,16 @@ func (s *Server) startPipelineRun(w http.ResponseWriter, pipeline store.Pipeline
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取目标数据源失败")
 		return
 	}
+	transforms, err := decodeTransforms(version.TransformsJSON)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本 Transform 失败")
+		return
+	}
 	spec := worker.RunSpec{Pipeline: &worker.PipelineSpec{
-		Source: source.workerEndpoint(sourceDS),
-		Sink:   sink.workerEndpoint(sinkDS),
+		Source:                  source.workerEndpoint(sourceDS),
+		Transforms:              transforms,
+		TransformLibraryVersion: version.TransformLibraryVersion,
+		Sink:                    sink.workerEndpoint(sinkDS),
 	}}
 
 	pipelineID := pipeline.ID

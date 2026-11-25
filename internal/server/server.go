@@ -157,6 +157,7 @@ func (s *Server) routes() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/pipelines", s.handleListPipelines)
 	protected.HandleFunc("POST /api/v1/pipelines", s.handleCreatePipeline)
+	protected.HandleFunc("POST /api/v1/pipelines/transform-preview", s.handleTransformPreview)
 	protected.HandleFunc("/api/v1/pipelines", methodNotAllowed("GET, POST"))
 	protected.HandleFunc("GET /api/v1/pipelines/{id}", s.handleGetPipeline)
 	protected.HandleFunc("PUT /api/v1/pipelines/{id}", s.handleUpdatePipeline)
