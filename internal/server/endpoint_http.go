@@ -89,9 +89,9 @@ func normalizeEndpointRequest(req endpointRequest, kind string, requireSchema bo
 	}
 
 	switch req.Connector {
-	case "sqlite":
+	case "sqlite", "mysql", "postgres":
 		if req.Path != "" {
-			return req, fmt.Errorf("SQLite 连接器使用表或查询，不接受文件路径")
+			return req, fmt.Errorf("数据库连接器使用表或查询，不接受文件路径")
 		}
 		if len([]rune(req.Table)) > 200 {
 			return req, fmt.Errorf("表名不能超过 200 个字符")
@@ -114,7 +114,7 @@ func normalizeEndpointRequest(req endpointRequest, kind string, requireSchema bo
 	}
 
 	if kind == store.EndpointKindSink {
-		if req.Connector == "sqlite" {
+		if isDatabaseConnector(req.Connector) {
 			if req.Query != "" {
 				return req, fmt.Errorf("目标不支持查询")
 			}
@@ -122,7 +122,7 @@ func normalizeEndpointRequest(req endpointRequest, kind string, requireSchema bo
 				return req, fmt.Errorf("目标表不能为空")
 			}
 		}
-	} else if req.Connector == "sqlite" && req.Table == "" && req.Query == "" {
+	} else if isDatabaseConnector(req.Connector) && req.Table == "" && req.Query == "" {
 		return req, fmt.Errorf("源必须填写表或查询")
 	}
 
@@ -161,6 +161,15 @@ func normalizeEndpointRequest(req endpointRequest, kind string, requireSchema bo
 	return req, nil
 }
 
+func isDatabaseConnector(name string) bool {
+	switch name {
+	case "sqlite", "mysql", "postgres":
+		return true
+	default:
+		return false
+	}
+}
+
 func endpointConnectorConfig(ds store.DataSource, req endpointRequest, schema connector.Schema) connector.Config {
 	return buildConnectorConfig(ds, req.Connector, schema, req.Options, req.Table, req.Query, req.Path)
 }
@@ -187,6 +196,8 @@ func buildConnectorConfig(ds store.DataSource, connectorName string, schema conn
 		Connector:            connectorName,
 		DataSourceType:       ds.Type,
 		JDBCUrl:              ds.JDBCUrl,
+		Username:             ds.Username,
+		Password:             ds.Password,
 		DataSourceProperties: properties,
 		Schema:               schema,
 		Options:              options,

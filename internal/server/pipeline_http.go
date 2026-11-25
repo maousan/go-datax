@@ -108,6 +108,8 @@ func (s pipelineEndpointSnapshot) workerEndpoint(dataSource store.DataSource) wo
 		Connector:            config.Connector,
 		DataSourceType:       config.DataSourceType,
 		JDBCUrl:              config.JDBCUrl,
+		Username:             config.Username,
+		Password:             config.Password,
 		DataSourceProperties: config.DataSourceProperties,
 		Schema:               config.Schema,
 		Options:              config.Options,

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/longkeyy/go-datax/internal/connector"
+	"github.com/longkeyy/go-datax/internal/store"
 )
 
 func createFileSystemDataSource(t *testing.T, handler http.Handler, token, name, root string) dataSourceResponse {
@@ -338,5 +339,62 @@ func TestSQLiteSourceSinkAndValidation(t *testing.T) {
 	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/data-sources/"+itoa(ds.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete data source status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMySQLAndPostgresEndpointDefinitions(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+	mysql := createDataSource(t, handler, token, "mysql-db", "mysql", "jdbc:mysql://localhost:3306/app", "root", "secret")
+	postgres := createDataSource(t, handler, token, "pg-db", "postgres", "jdbc:postgresql://localhost:5432/app", "postgres", "secret")
+	schema := []map[string]string{
+		{"name": "id", "type": "int64"},
+		{"name": "name", "type": "string"},
+	}
+
+	source := endpointBody("orders-mysql", "mysql", mysql.ID, schema)
+	source["table"] = "orders"
+	source["options"] = map[string]string{"splitPk": "id"}
+	createdSource := createEndpoint(t, handler, token, "sources", source)
+	if createdSource.Connector != "mysql" || createdSource.Table != "orders" {
+		t.Fatalf("source = %+v", createdSource)
+	}
+
+	sink := endpointBody("orders-pg", "postgres", postgres.ID, schema)
+	sink["table"] = "orders_copy"
+	sink["options"] = map[string]string{"writeMode": "upsert"}
+	createdSink := createEndpoint(t, handler, token, "sinks", sink)
+	if createdSink.Connector != "postgres" || createdSink.Options["writeMode"] != "upsert" {
+		t.Fatalf("sink = %+v", createdSink)
+	}
+
+	wrongType := endpointBody("orders-wrong-ds", "mysql", postgres.ID, schema)
+	wrongType["table"] = "orders"
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sources", token, wrongType)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched data source status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	sqlite := createDataSource(t, handler, token, "sqlite-db", "sqlite", "jdbc:sqlite:"+filepath.Join(t.TempDir(), "app.db"), "", "")
+	sqliteSink := endpointBody("orders-sqlite-upsert", "sqlite", sqlite.ID, schema)
+	sqliteSink["table"] = "dst"
+	sqliteSink["options"] = map[string]string{"writeMode": "upsert"}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sinks", token, sqliteSink)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("sqlite upsert status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConnectorConfigCarriesDataSourceCredentials(t *testing.T) {
+	cfg := buildConnectorConfig(store.DataSource{
+		Type:     "mysql",
+		JDBCUrl:  "jdbc:mysql://localhost/app",
+		Username: "app_user",
+		Password: "secret",
+	}, "mysql", connector.Schema{{Name: "id", Type: connector.TypeInt64}}, nil, "orders", "", "")
+	if cfg.Username != "app_user" || cfg.Password != "secret" {
+		t.Fatalf("config credentials = %q/%q", cfg.Username, cfg.Password)
 	}
 }
