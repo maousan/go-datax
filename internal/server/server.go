@@ -67,7 +67,7 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 		}
 	}
 	s.scheduler = newCollectScheduler(s)
-	s.worker = newWorkerSupervisor(cfg.Worker)
+	s.worker = newWorkerSupervisor(cfg.Worker, dataStore)
 	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
 	s.monitor.Start()
 	s.applySavedRuntimeSettings()

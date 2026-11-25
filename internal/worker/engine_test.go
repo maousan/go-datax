@@ -32,10 +32,10 @@ func TestRunDiagnosticCompletes(t *testing.T) {
 	sink := &recordingSink{}
 	var events []Event
 	status, err := RunDiagnostic(context.Background(), RunSpec{
-		Rows:      1000,
-		BatchSize: 100,
+		Rows:      1024,
+		BatchSize: 256,
 		Splits:    2,
-		MaxBytes:  20000,
+		MaxBytes:  51200,
 	}, sink, func(event Event) {
 		events = append(events, event)
 	})
@@ -47,23 +47,33 @@ func TestRunDiagnosticCompletes(t *testing.T) {
 	}
 
 	batches := sink.snapshot()
-	if len(batches) != 10 {
-		t.Fatalf("batches = %d, want 10", len(batches))
+	if len(batches) != 4 {
+		t.Fatalf("batches = %d, want 4", len(batches))
 	}
 	var rows int
 	for _, batch := range batches {
 		rows += batch.Rows
 	}
-	if rows != 1000 {
-		t.Fatalf("rows = %d, want 1000", rows)
+	if rows != 1024 {
+		t.Fatalf("rows = %d, want 1024", rows)
 	}
 
 	if len(events) == 0 {
 		t.Fatal("expected progress/done events")
 	}
 	last := events[len(events)-1]
-	if last.Type != "done" || last.Status != StatusSucceeded || last.ReadRecords != 1000 {
-		t.Fatalf("last event = %+v, want done/succeeded/1000", last)
+	if last.Type != "done" || last.Status != StatusSucceeded || last.ReadRecords != 1024 {
+		t.Fatalf("last event = %+v, want done/succeeded/1024", last)
+	}
+	if len(last.Tasks) != 2 {
+		t.Fatalf("task stats = %d, want 2", len(last.Tasks))
+	}
+	var taskRows int64
+	for _, task := range last.Tasks {
+		taskRows += task.Records
+	}
+	if taskRows != 1024 {
+		t.Fatalf("task rows = %d, want 1024", taskRows)
 	}
 }
 
@@ -73,9 +83,9 @@ func TestRunDiagnosticCanceled(t *testing.T) {
 	go func() {
 		status, _ := RunDiagnostic(ctx, RunSpec{
 			Rows:            1000000,
-			BatchSize:       100,
+			BatchSize:       256,
 			Splits:          2,
-			MaxBytes:        20000,
+			MaxBytes:        51200,
 			DelayPerBatchMS: 20,
 		}, &recordingSink{}, nil)
 		statusCh <- status

@@ -30,7 +30,7 @@ func main() {
 	}
 
 	server := worker.NewServer(workerToken)
-	fmt.Printf("etl-worker listening on http://%s\n", ln.Addr().String())
+	fmt.Printf("%shttp://%s\n", worker.ListenAddressPrefix, ln.Addr().String())
 	if err := http.Serve(ln, server.Handler()); err != nil {
 		log.Fatalf("etl-worker: serve: %v", err)
 	}

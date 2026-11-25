@@ -88,6 +88,11 @@ func main() {
 	} else if failed > 0 {
 		log.Printf("已将 %d 条残留运行标记为失败", failed)
 	}
+	if failed, err := dataStore.MarkRunningPipelineRunsFailed("服务重启导致运行中断"); err != nil {
+		log.Printf("恢复残留 PipelineRun 状态失败: %v", err)
+	} else if failed > 0 {
+		log.Printf("已将 %d 条残留 PipelineRun 标记为失败", failed)
+	}
 
 	dataxBin, dataxVersion, err := resolveDataXBin(cfg)
 	if err != nil {

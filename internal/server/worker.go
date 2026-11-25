@@ -17,13 +17,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/longkeyy/go-datax/internal/store"
 	"github.com/longkeyy/go-datax/internal/worker"
 )
 
 // workerSupervisor owns the etl-worker process and its protocol client.
 type workerSupervisor struct {
-	cfg     WorkerConfig
-	backoff time.Duration
+	cfg            WorkerConfig
+	backoff        time.Duration
+	healthInterval time.Duration
+	store          *store.Store
 
 	mu       sync.Mutex
 	client   *worker.Client
@@ -32,17 +35,24 @@ type workerSupervisor struct {
 	url      string
 	stopping bool
 	restarts int
-	active   map[string]worker.RunStatus
+	runs     map[string]trackedRun
 }
 
-func newWorkerSupervisor(cfg WorkerConfig) *workerSupervisor {
+type trackedRun struct {
+	pipelineRunID int64
+	status        worker.RunStatus
+}
+
+func newWorkerSupervisor(cfg WorkerConfig, dataStore *store.Store) *workerSupervisor {
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:0"
 	}
 	return &workerSupervisor{
-		cfg:     cfg,
-		backoff: time.Second,
-		active:  map[string]worker.RunStatus{},
+		cfg:            cfg,
+		backoff:        time.Second,
+		healthInterval: 5 * time.Second,
+		store:          dataStore,
+		runs:           map[string]trackedRun{},
 	}
 }
 
@@ -70,6 +80,8 @@ func (s *workerSupervisor) Start() error {
 		s.client = client
 		s.url = s.cfg.URL
 		s.mu.Unlock()
+		log.Printf("etl-worker 已连接外部 worker: %s", s.cfg.URL)
+		go s.watchExternalWorker(client)
 		return nil
 	}
 
@@ -82,6 +94,8 @@ func (s *workerSupervisor) Start() error {
 
 // Stop terminates the spawned worker, or drops an external connection.
 func (s *workerSupervisor) Stop() {
+	s.failActiveRuns("etl-server 停止导致运行中断")
+
 	s.mu.Lock()
 	s.stopping = true
 	cmd := s.cmd
@@ -106,17 +120,61 @@ func (s *workerSupervisor) Stop() {
 	s.mu.Unlock()
 }
 
-// StartDiagnosticRun submits a diagnostic run to the current worker.
+func (s *workerSupervisor) watchExternalWorker(client *worker.Client) {
+	interval := s.healthInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	for {
+		time.Sleep(interval)
+		s.mu.Lock()
+		stopping := s.stopping
+		s.mu.Unlock()
+		if stopping {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := client.Health(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("外部 etl-worker 不可用: %v", err)
+			s.failActiveRuns("etl-worker 连接中断")
+		}
+	}
+}
+
+// StartDiagnosticRun submits a diagnostic run and records a PipelineRun row.
 func (s *workerSupervisor) StartDiagnosticRun(ctx context.Context, spec worker.RunSpec) (string, error) {
 	client, err := s.currentClient()
 	if err != nil {
 		return "", err
 	}
+
+	var pipelineRunID int64
+	if s.store != nil {
+		record := &store.PipelineRun{
+			PipelineName: "diagnostic",
+			Status:       store.PipelineRunStatusRunning,
+			Trigger:      store.PipelineRunTriggerDiagnostic,
+			StartedAt:    time.Now(),
+		}
+		if err := s.store.CreatePipelineRun(record); err != nil {
+			return "", fmt.Errorf("record pipeline run: %w", err)
+		}
+		pipelineRunID = record.ID
+	}
+
 	id, err := client.StartRun(ctx, spec)
 	if err != nil {
+		if pipelineRunID > 0 {
+			_ = s.store.FinishPipelineRun(pipelineRunID, store.PipelineRunStatusFailed, err.Error())
+		}
 		return "", err
 	}
-	s.setActive(id, worker.StatusRunning)
+
+	s.mu.Lock()
+	s.runs[id] = trackedRun{pipelineRunID: pipelineRunID, status: worker.StatusRunning}
+	s.mu.Unlock()
 	return id, nil
 }
 
@@ -138,18 +196,18 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 				state, statusErr := client.Status(statusCtx, id)
 				cancel()
 				if statusErr == nil {
-					s.setActive(id, state.Status)
-					if state.Status == worker.StatusQueued || state.Status == worker.StatusRunning {
-						s.setActive(id, worker.StatusFailed)
+					if state.Status.IsActive() {
+						s.finishRun(id, worker.StatusFailed, "worker stream ended before run completion")
 						return worker.StatusFailed, fmt.Errorf("worker stream ended before run completion")
 					}
+					s.finishRun(id, state.Status, state.Error)
 					return state.Status, nil
 				}
-				s.setActive(id, worker.StatusFailed)
+				s.finishRun(id, worker.StatusFailed, statusErr.Error())
 				return worker.StatusFailed, statusErr
 			}
 			if event.Type == "done" {
-				s.setActive(id, event.Status)
+				s.finishRun(id, event.Status, event.Error)
 				return event.Status, nil
 			}
 		case streamErr, ok := <-errs:
@@ -158,7 +216,7 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 				continue
 			}
 			if streamErr != nil {
-				s.setActive(id, worker.StatusFailed)
+				s.finishRun(id, worker.StatusFailed, streamErr.Error())
 				return worker.StatusFailed, streamErr
 			}
 		case <-ctx.Done():
@@ -171,7 +229,14 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 func (s *workerSupervisor) RunStatus(id string) worker.RunStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.active[id]
+	return s.runs[id].status
+}
+
+// PipelineRunID returns the persisted PipelineRun id for a worker run (0 if unrecorded).
+func (s *workerSupervisor) PipelineRunID(id string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runs[id].pipelineRunID
 }
 
 // RestartCount reports how many times the local worker was restarted.
@@ -197,10 +262,56 @@ func (s *workerSupervisor) currentClient() (*worker.Client, error) {
 	return s.client, nil
 }
 
-func (s *workerSupervisor) setActive(id string, status worker.RunStatus) {
+func (s *workerSupervisor) finishRun(id string, status worker.RunStatus, summary string) {
 	s.mu.Lock()
-	s.active[id] = status
+	run, ok := s.runs[id]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	run.status = status
+	s.runs[id] = run
 	s.mu.Unlock()
+
+	if run.pipelineRunID == 0 || s.store == nil {
+		return
+	}
+	storeStatus := string(status)
+	if status == worker.StatusQueued {
+		storeStatus = store.PipelineRunStatusRunning
+	}
+	if err := s.store.FinishPipelineRun(run.pipelineRunID, storeStatus, summary); err != nil {
+		log.Printf("更新 PipelineRun #%d 失败: %v", run.pipelineRunID, err)
+	}
+}
+
+func (s *workerSupervisor) failActiveRuns(summary string) {
+	type failedRun struct {
+		pipelineRunID int64
+	}
+	var failed []failedRun
+	s.mu.Lock()
+	for id, run := range s.runs {
+		if !run.status.IsActive() {
+			continue
+		}
+		run.status = worker.StatusFailed
+		s.runs[id] = run
+		failed = append(failed, failedRun{pipelineRunID: run.pipelineRunID})
+	}
+	s.mu.Unlock()
+
+	if s.store == nil {
+		return
+	}
+	for _, run := range failed {
+		if run.pipelineRunID == 0 {
+			continue
+		}
+		if err := s.store.FinishPipelineRun(run.pipelineRunID, store.PipelineRunStatusFailed, summary); err != nil {
+			log.Printf("更新 PipelineRun #%d 失败: %v", run.pipelineRunID, err)
+		}
+	}
 }
 
 func (s *workerSupervisor) spawn() error {
@@ -278,6 +389,7 @@ func (s *workerSupervisor) spawn() error {
 	s.procDone = done
 	s.url = baseURL
 	s.mu.Unlock()
+	log.Printf("etl-worker 已启动: %s", baseURL)
 
 	go func() {
 		_ = cmd.Wait()
@@ -302,11 +414,10 @@ func (s *workerSupervisor) supervise() {
 			s.mu.Unlock()
 			return
 		}
-		for id, status := range s.active {
-			if status == worker.StatusQueued || status == worker.StatusRunning {
-				s.active[id] = worker.StatusFailed
-			}
-		}
+		s.mu.Unlock()
+		s.failActiveRuns("etl-worker 退出导致运行中断")
+
+		s.mu.Lock()
 		s.restarts++
 		attempt := s.restarts
 		s.client = nil
@@ -370,8 +481,8 @@ func scanWorkerOutput(r io.Reader, urlCh chan<- string, errCh chan<- error) {
 	sent := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if !sent && strings.HasPrefix(line, "etl-worker listening on ") {
-			urlCh <- strings.TrimPrefix(line, "etl-worker listening on ")
+		if !sent && strings.HasPrefix(line, worker.ListenAddressPrefix) {
+			urlCh <- strings.TrimPrefix(line, worker.ListenAddressPrefix)
 			sent = true
 			continue
 		}

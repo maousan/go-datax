@@ -42,6 +42,7 @@ All notable changes to this project will be documented in this file.
   - 新增 `etl-worker` 二进制与 HTTP/JSON + SSE 协议：shared token、诊断 run、进度、日志与取消
   - `etl-server` 默认启动并监管本地 worker；支持 `worker.url` + `worker.token` 连接外部 worker
   - worker 崩溃时在飞运行标记失败并自动重启；worker 不访问 `admin.db`
+  - 诊断运行写入 `pipeline_runs`（状态/起止/错误）；server 重启、worker 崩溃或外部连接中断时标记失败
   - 新增配置项 `worker.url`、`worker.token`、`worker.bin`、`worker.listen`
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面

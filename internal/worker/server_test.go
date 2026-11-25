@@ -51,10 +51,10 @@ func TestServerRunStreamsToCompletion(t *testing.T) {
 	defer cancel()
 
 	id, err := client.StartRun(ctx, RunSpec{
-		Rows:      500,
-		BatchSize: 100,
+		Rows:      1024,
+		BatchSize: 256,
 		Splits:    2,
-		MaxBytes:  20000,
+		MaxBytes:  51200,
 	})
 	if err != nil {
 		t.Fatalf("StartRun() failed: %v", err)
@@ -83,16 +83,22 @@ func TestServerRunStreamsToCompletion(t *testing.T) {
 	if done.Status != StatusSucceeded {
 		t.Fatalf("done status = %q, want succeeded (%s)", done.Status, done.Error)
 	}
-	if done.ReadRecords != 500 {
-		t.Fatalf("done records = %d, want 500", done.ReadRecords)
+	if done.ReadRecords != 1024 {
+		t.Fatalf("done records = %d, want 1024", done.ReadRecords)
+	}
+	if len(done.Tasks) != 2 {
+		t.Fatalf("task stats = %d, want 2", len(done.Tasks))
 	}
 
 	state, err := client.Status(ctx, id)
 	if err != nil {
 		t.Fatalf("Status() failed: %v", err)
 	}
-	if state.Status != StatusSucceeded || state.ReadRecords != 500 {
-		t.Fatalf("state = %+v, want succeeded/500", state)
+	if state.Status != StatusSucceeded || state.ReadRecords != 1024 {
+		t.Fatalf("state = %+v, want succeeded/1024", state)
+	}
+	if len(state.Tasks) != 2 {
+		t.Fatalf("state task stats = %d, want 2", len(state.Tasks))
 	}
 }
 
@@ -103,9 +109,9 @@ func TestServerCancelStopsRun(t *testing.T) {
 
 	id, err := client.StartRun(ctx, RunSpec{
 		Rows:            1000000,
-		BatchSize:       100,
+		BatchSize:       256,
 		Splits:          2,
-		MaxBytes:        20000,
+		MaxBytes:        51200,
 		DelayPerBatchMS: 20,
 	})
 	if err != nil {

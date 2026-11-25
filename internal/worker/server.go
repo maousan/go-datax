@@ -15,6 +15,11 @@ import (
 
 const bearerPrefix = "Bearer "
 
+const (
+	maxRunEvents    = 2000
+	maxRetainedRuns = 128
+)
+
 // Server exposes the worker protocol over HTTP.
 type Server struct {
 	token   string
@@ -88,7 +93,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	events, live, done, ok := s.manager.Subscribe(r.PathValue("id"))
+	sub, ok := s.manager.Subscribe(r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -99,7 +104,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
 
-	for _, event := range events {
+	for _, event := range sub.Events {
 		if err := writeSSE(w, event); err != nil {
 			return
 		}
@@ -107,13 +112,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if flusher != nil {
 		flusher.Flush()
 	}
-	if done {
+	if sub.Done {
 		return
 	}
 
 	for {
 		select {
-		case event, ok := <-live:
+		case event, ok := <-sub.Live:
 			if !ok {
 				return
 			}
@@ -190,6 +195,14 @@ func (m *runManager) Start(spec RunSpec) (string, error) {
 		subs:   map[chan Event]struct{}{},
 	}
 	m.mu.Lock()
+	if len(m.runs) >= maxRetainedRuns {
+		for runID, existing := range m.runs {
+			if existing.done {
+				delete(m.runs, runID)
+				break
+			}
+		}
+	}
 	m.runs[id] = run
 	m.mu.Unlock()
 
@@ -200,8 +213,7 @@ func (m *runManager) Start(spec RunSpec) (string, error) {
 func (m *runManager) execute(ctx context.Context, id string, spec RunSpec) {
 	m.publish(id, Event{Type: "log", Message: "diagnostic run started"})
 	m.setStatus(id, StatusRunning)
-	sink := &countingSink{}
-	_, _ = RunDiagnostic(ctx, spec, sink, func(event Event) {
+	_, _ = RunDiagnostic(ctx, spec, discardSink{}, func(event Event) {
 		m.publish(id, event)
 	})
 }
@@ -223,6 +235,9 @@ func (m *runManager) publish(id string, event Event) {
 	}
 	event.RunID = id
 	run.events = append(run.events, event)
+	if len(run.events) > maxRunEvents {
+		run.events = append([]Event(nil), run.events[len(run.events)-maxRunEvents:]...)
+	}
 	if event.Type == "progress" {
 		run.state.ReadRecords = event.ReadRecords
 		run.state.ReadBytes = event.ReadBytes
@@ -232,6 +247,7 @@ func (m *runManager) publish(id string, event Event) {
 		run.state.ReadRecords = event.ReadRecords
 		run.state.ReadBytes = event.ReadBytes
 		run.state.Error = event.Error
+		run.state.Tasks = append([]TaskStats(nil), event.Tasks...)
 		finished := time.Now()
 		run.state.FinishedAt = &finished
 		run.done = true
@@ -240,6 +256,8 @@ func (m *runManager) publish(id string, event Event) {
 		select {
 		case ch <- event:
 		default:
+			close(ch)
+			delete(run.subs, ch)
 		}
 	}
 	if event.Type == "done" {
@@ -263,6 +281,7 @@ func (m *runManager) Status(id string) (RunState, bool) {
 		finished := *run.state.FinishedAt
 		state.FinishedAt = &finished
 	}
+	state.Tasks = append([]TaskStats(nil), run.state.Tasks...)
 	return state, true
 }
 
@@ -279,39 +298,32 @@ func (m *runManager) Cancel(id string) bool {
 	return true
 }
 
-func (m *runManager) Subscribe(id string) ([]Event, <-chan Event, bool, bool) {
+type subscription struct {
+	Events []Event
+	Live   <-chan Event
+	Done   bool
+}
+
+func (m *runManager) Subscribe(id string) (subscription, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	run := m.runs[id]
 	if run == nil {
-		return nil, nil, false, false
+		return subscription{}, false
 	}
 	events := append([]Event(nil), run.events...)
 	if run.done {
-		return events, nil, true, true
+		return subscription{Events: events, Done: true}, true
 	}
 	ch := make(chan Event, 64)
 	run.subs[ch] = struct{}{}
-	return events, ch, false, true
+	return subscription{Events: events, Live: ch}, true
 }
 
-type countingSink struct {
-	mu      sync.Mutex
-	batches int
-	rows    int64
-	bytes   int64
-}
+type discardSink struct{}
 
-func (s *countingSink) SendBatch(ctx context.Context, batch Batch) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.batches++
-	s.rows += int64(batch.Rows)
-	s.bytes += batch.Bytes
-	s.mu.Unlock()
-	return nil
+func (discardSink) SendBatch(ctx context.Context, batch Batch) error {
+	return ctx.Err()
 }
 
 func newRunID() (string, error) {

@@ -21,8 +21,8 @@ func normalizeRunSpec(spec RunSpec) (RunSpec, error) {
 	if spec.BatchSize == 0 {
 		spec.BatchSize = 512
 	}
-	if spec.BatchSize < 1 || spec.BatchSize > 4096 {
-		return spec, fmt.Errorf("batchSize must be between 1 and 4096")
+	if spec.BatchSize < 256 || spec.BatchSize > 1024 {
+		return spec, fmt.Errorf("batchSize must be between 256 and 1024")
 	}
 	if spec.Splits == 0 {
 		spec.Splits = 1
@@ -45,6 +45,7 @@ func normalizeRunSpec(spec RunSpec) (RunSpec, error) {
 // RunDiagnostic exercises the batch pipeline with synthetic records.
 // Each record costs a fixed 100 bytes; it is a protocol/backpressure test, not a benchmark.
 func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(Event)) (RunStatus, error) {
+	// Validate again here: the manager validates for a fast 400, but this is also a direct entry point.
 	spec, err := normalizeRunSpec(spec)
 	if err != nil {
 		return StatusFailed, err
@@ -59,8 +60,9 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 	budget := newByteBudget(runCtx, spec.MaxBytes)
 	batches := make(chan Batch, spec.Splits*2)
 	var produced sync.WaitGroup
-	var seq atomic.Int64
 	var readRecords, readBytes atomic.Int64
+	taskRecords := make([]atomic.Int64, spec.Splits)
+	taskBytes := make([]atomic.Int64, spec.Splits)
 
 	remaining := spec.Rows
 	for split := 0; split < spec.Splits; split++ {
@@ -70,14 +72,14 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 			continue
 		}
 		produced.Add(1)
-		go func(rows int) {
+		go func(split, rows int) {
 			defer produced.Done()
 			for rows > 0 {
 				size := spec.BatchSize
 				if size > rows {
 					size = rows
 				}
-				batch := Batch{Rows: size, Bytes: int64(size) * 100, Sequence: int(seq.Add(1))}
+				batch := Batch{Rows: size, Bytes: int64(size) * 100, Split: split}
 				if err := budget.acquire(runCtx, batch.Bytes); err != nil {
 					return
 				}
@@ -89,7 +91,7 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 					return
 				}
 			}
-		}(rows)
+		}(split, rows)
 	}
 	go func() {
 		produced.Wait()
@@ -125,6 +127,8 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 		budget.release(batch.Bytes)
 		records := readRecords.Add(int64(batch.Rows))
 		bytes := readBytes.Add(batch.Bytes)
+		taskRecords[batch.Split].Add(int64(batch.Rows))
+		taskBytes[batch.Split].Add(batch.Bytes)
 		if emit != nil {
 			emit(Event{
 				Type:        "progress",
@@ -147,11 +151,20 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 		status = StatusFailed
 	}
 	if emit != nil {
+		tasks := make([]TaskStats, 0, spec.Splits)
+		for index := range taskRecords {
+			tasks = append(tasks, TaskStats{
+				Task:    index,
+				Records: taskRecords[index].Load(),
+				Bytes:   taskBytes[index].Load(),
+			})
+		}
 		event := Event{
 			Type:        "done",
 			Status:      status,
 			ReadRecords: readRecords.Load(),
 			ReadBytes:   readBytes.Load(),
+			Tasks:       tasks,
 		}
 		if runErr != nil && status == StatusFailed {
 			event.Error = runErr.Error()
