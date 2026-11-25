@@ -15,6 +15,8 @@ const pipeline: Pipeline = {
   sinkId: 2,
   source: null,
   sink: null,
+  transforms: [],
+  transformPreview: null,
   draftVersionNumber: 0,
   latestVersion: null,
   lastRun: null,

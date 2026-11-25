@@ -233,6 +233,7 @@ function CreatePipelineModal({
         description: description.trim(),
         sourceId,
         sinkId,
+        transforms: [],
       })
       Message.success('Pipeline 已创建')
       onCreated(pipeline)

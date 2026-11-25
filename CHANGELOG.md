@@ -69,6 +69,14 @@ All notable changes to this project will be documented in this file.
   - 新增 ETL「运行记录」页，按 Pipeline、状态筛选并分页查看
   - Pipeline 日志按运行时设置 `maxLogBytes` 截断；运行记录与日志按 `maxRuns`/`maxAgeDays` 清理
   - `POST /api/v1/pipeline-versions/{id}/runs`、`POST /api/v1/pipelines/{id}/versions/{versionId}/restore`、`POST /api/v1/pipeline-runs/{id}/cancel|rerun`
+- **Pipeline 表达式 Transform 步骤**:
+  - 新增 `project`/`filter`/`cast`/`rename`/`drop` 五种按顺序执行的 Transform 步骤，表达式中可直接引用列名，含空格的列名用 `_row["列名"]`
+  - 固定函数库（`FunctionLibraryVersion=1`）：`substr`、`to_int`、`to_float`、`to_string`、`to_bool`、`to_time`、`parse_time`、`format_time`、`date_add`、`round_to`、`md5`、`sha1`、`sha256`、`mask_email`、`mask_phone`、`mask_id`、`mask_all`、`is_null`，并保留 expr 内置的字符串/数学函数；函数库版本随发布版本快照，worker 拒绝执行不支持的版本
+  - 函数库对 NULL 入参返回 NULL（`is_null` 除外），避免空值触发类型断言失败
+  - `POST /api/v1/pipelines/transform-preview` 按源 schema 推导每一步输入/输出字段；草稿保存时校验表达式，发布时要求最终输出字段与目标 schema 完全一致
+  - worker 每个批次执行 Transform 链：filter 丢弃行、project/cast 派生并转换值、rename/drop 调整字段；表达式求值或类型转换失败按步骤/行号 fail-fast
+  - 源字段漂移导致草稿 Transform 失效时，Pipeline 列表/详情仍可读取，Transform 预览改为在编辑器中显示校验错误
+  - Pipeline 草稿、版本与运行快照持久化 Transform；详情页新增可视化编辑器，支持增删/排序步骤、实时预览 schema 与目标一致性提示
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

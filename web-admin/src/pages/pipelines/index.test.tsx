@@ -121,6 +121,7 @@ describe('PipelinesPage', () => {
       name: 'ui-pipeline',
       sourceId: 11,
       sinkId: 12,
+      transforms: [],
     })
   })
 })

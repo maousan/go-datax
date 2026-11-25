@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SchemaColumn } from '../../api/endpoints'
 import type { Pipeline, PipelineEndpointSummary } from '../../api/pipelines'
 import {
+  defaultTransformStep,
   endpointObjectText,
   pipelineChain,
   schemaText,
@@ -57,5 +58,17 @@ describe('pipeline helpers', () => {
     expect(triggerLabel('manual')).toBe('手动')
     expect(triggerLabel('rerun')).toBe('重跑')
     expect(triggerLabel('schedule')).toBe('schedule')
+  })
+
+  it('creates default transform steps from the input schema', () => {
+    expect(defaultTransformStep('cast', schema)).toEqual({
+      type: 'cast',
+      cast: [{ column: 'id', type: 'string' }],
+    })
+    expect(defaultTransformStep('rename', [])).toEqual({
+      type: 'rename',
+      rename: [{ from: '', to: '' }],
+    })
+    expect(defaultTransformStep('filter', schema)).toEqual({ type: 'filter', condition: '' })
   })
 })

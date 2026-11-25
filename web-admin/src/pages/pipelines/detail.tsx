@@ -53,6 +53,7 @@ import {
   schemasMatch,
   triggerLabel,
 } from './helpers'
+import TransformEditor from './transforms'
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback
@@ -281,6 +282,7 @@ function DraftEditor({
   const [description, setDescription] = useState(pipeline.description)
   const [sourceId, setSourceId] = useState<number>(pipeline.sourceId)
   const [sinkId, setSinkId] = useState<number>(pipeline.sinkId)
+  const [transforms, setTransforms] = useState(pipeline.transforms ?? [])
   const [error, setError] = useState('')
   const sources = sourcesQuery.data ?? []
   const sinks = sinksQuery.data ?? []
@@ -295,12 +297,16 @@ function DraftEditor({
     restoredFrom && sinkId === pipeline.sinkId
       ? pipeline.sink ?? selectedSink
       : selectedSink
-  const mismatch = Boolean(source && sink && !schemasMatch(source.schema, sink.schema))
+  const directMismatch = Boolean(
+    source && sink && !schemasMatch(source.schema, sink.schema),
+  )
+  const hasTransforms = transforms.length > 0
   const dirty =
     name.trim() !== pipeline.name ||
     description.trim() !== pipeline.description ||
     sourceId !== pipeline.sourceId ||
-    sinkId !== pipeline.sinkId
+    sinkId !== pipeline.sinkId ||
+    JSON.stringify(transforms) !== JSON.stringify(pipeline.transforms ?? [])
 
   const saveDraft = async () => {
     if (!name.trim()) {
@@ -317,6 +323,7 @@ function DraftEditor({
       description: description.trim(),
       sourceId,
       sinkId,
+      transforms,
     })
     Message.success('草稿已保存')
   }
@@ -326,8 +333,8 @@ function DraftEditor({
       setError('请选择源和目标')
       return
     }
-    if (!schemasMatch(source.schema, sink.schema)) {
-      setError('源与目标的字段不一致，无法发布')
+    if (!schemasMatch(source.schema, sink.schema) && !hasTransforms) {
+      setError('源与目标的字段不一致，请添加 Transform 或调整端点字段')
       return
     }
     setError('')
@@ -338,6 +345,7 @@ function DraftEditor({
           description: description.trim(),
           sourceId,
           sinkId,
+          transforms,
         })
       }
       await publishMutation.mutateAsync()
@@ -357,10 +365,10 @@ function DraftEditor({
           content={`草稿由 v${pipeline.draftVersionNumber} 快照重建；直接发布会使用快照中的源/目标定义。修改源或目标后保存会清除快照。`}
         />
       ) : null}
-      {mismatch ? (
+      {!hasTransforms && directMismatch ? (
         <Alert
           type="warning"
-          content="源与目标的字段不一致；保存草稿不受影响，发布会被拒绝。"
+          content="源与目标的字段不一致；添加 Transform 或调整端点字段后再发布。"
         />
       ) : null}
       <Form layout="vertical" className={styles.form}>
@@ -410,6 +418,15 @@ function DraftEditor({
           </div>
         </Form.Item>
       </Form>
+
+      <TransformEditor
+        sourceId={sourceId}
+        sourceSchema={source?.schema ?? []}
+        sinkSchema={sink?.schema ?? []}
+        steps={transforms}
+        initialPreview={pipeline.transformPreview}
+        onChange={setTransforms}
+      />
       <Space>
         <Button
           icon={<IconSave />}
@@ -428,7 +445,7 @@ function DraftEditor({
             type="primary"
             icon={<IconSend />}
             loading={publishMutation.isPending}
-            disabled={!source || !sink || mismatch}
+            disabled={!source || !sink || (!hasTransforms && directMismatch)}
           >
             发布版本
           </Button>
@@ -574,7 +591,16 @@ function SnapshotModal({
       style={{ width: 'min(820px, calc(100vw - 48px))', top: 40 }}
     >
       <pre className={styles.snapshot}>
-        {JSON.stringify({ source: version.source, sink: version.sink }, null, 2)}
+        {JSON.stringify(
+          {
+            transformLibraryVersion: version.transformLibraryVersion,
+            source: version.source,
+            transforms: version.transforms,
+            sink: version.sink,
+          },
+          null,
+          2,
+        )}
       </pre>
     </Modal>
   )

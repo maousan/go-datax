@@ -1,10 +1,49 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getToken } from '../auth/storage'
 import { ApiError, apiGet, apiPost, apiPut } from './client'
-import type { ConnectorName, SchemaColumn } from './endpoints'
+import type { ConnectorName, DataType, SchemaColumn } from './endpoints'
 import type { RunStatus } from './runs'
 
 export type PipelineRunStatus = RunStatus
+
+export type TransformStepType = 'project' | 'filter' | 'cast' | 'rename' | 'drop'
+
+export interface ProjectColumn {
+  name: string
+  type: DataType
+  expr: string
+}
+
+export interface CastColumn {
+  column: string
+  type: DataType
+}
+
+export interface RenameColumn {
+  from: string
+  to: string
+}
+
+export interface TransformStep {
+  type: TransformStepType
+  project?: ProjectColumn[]
+  condition?: string
+  cast?: CastColumn[]
+  rename?: RenameColumn[]
+  drop?: string[]
+}
+
+export interface TransformStepPreview {
+  index: number
+  type: TransformStepType
+  inputSchema: SchemaColumn[]
+  outputSchema: SchemaColumn[]
+}
+
+export interface TransformPreview {
+  steps: TransformStepPreview[]
+  outputSchema: SchemaColumn[]
+}
 
 export interface PipelineEndpointSummary {
   id: number
@@ -52,6 +91,8 @@ export interface Pipeline {
   sinkId: number
   source: PipelineEndpointSummary | null
   sink: PipelineEndpointSummary | null
+  transforms: TransformStep[]
+  transformPreview: TransformPreview | null
   draftVersionNumber: number
   latestVersion: PipelineVersionSummary | null
   lastRun: PipelineRun | null
@@ -64,6 +105,7 @@ export interface PipelineInput {
   description: string
   sourceId: number
   sinkId: number
+  transforms: TransformStep[]
 }
 
 export interface PipelineEndpointSnapshot {
@@ -88,6 +130,8 @@ export interface PipelineVersion {
   summary: string
   source: PipelineEndpointSnapshot
   sink: PipelineEndpointSnapshot
+  transforms: TransformStep[]
+  transformLibraryVersion: number
   createdAt: string
 }
 
@@ -137,6 +181,18 @@ export function usePipeline(id: number) {
     queryKey: ['pipeline', id],
     queryFn: () => apiGet<Pipeline>(`/api/v1/pipelines/${id}`),
     enabled: Number.isFinite(id) && id > 0,
+  })
+}
+
+export async function previewPipelineTransforms(
+  sourceId: number,
+  sourceSchema: SchemaColumn[],
+  transforms: TransformStep[],
+): Promise<TransformPreview> {
+  return apiPost<TransformPreview>('/api/v1/pipelines/transform-preview', {
+    sourceId,
+    sourceSchema,
+    transforms,
   })
 }
 

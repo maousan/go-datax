@@ -1,5 +1,10 @@
 import type { SchemaColumn } from '../../api/endpoints'
-import type { Pipeline, PipelineEndpointSummary } from '../../api/pipelines'
+import type {
+  Pipeline,
+  PipelineEndpointSummary,
+  TransformStep,
+  TransformStepType,
+} from '../../api/pipelines'
 
 export function schemasMatch(left: SchemaColumn[], right: SchemaColumn[]): boolean {
   if (left.length !== right.length) return false
@@ -34,4 +39,22 @@ const TRIGGER_LABELS: Record<string, string> = {
 
 export function triggerLabel(trigger: string): string {
   return TRIGGER_LABELS[trigger] ?? trigger
+}
+
+export function defaultTransformStep(
+  type: TransformStepType,
+  input: SchemaColumn[],
+): TransformStep {
+  switch (type) {
+    case 'project':
+      return { type, project: [{ name: '', type: 'string', expr: '' }] }
+    case 'filter':
+      return { type, condition: '' }
+    case 'cast':
+      return { type, cast: [{ column: input[0]?.name ?? '', type: 'string' }] }
+    case 'rename':
+      return { type, rename: [{ from: input[0]?.name ?? '', to: '' }] }
+    case 'drop':
+      return { type, drop: [] }
+  }
 }
