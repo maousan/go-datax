@@ -6,6 +6,7 @@ import AlertLogsPage from './pages/alerts/logs'
 import CollectTasksPage from './pages/collect-tasks'
 import DataSourceDetailPage from './pages/data-sources/detail'
 import DataSourcesPage from './pages/data-sources'
+import EndpointsPage from './pages/endpoints'
 import LoginPage from './pages/login'
 import MonitorPage from './pages/monitor'
 import OverviewPage from './pages/overview'
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="data-sources/:id" element={<DataSourceDetailPage />} />
         <Route path="sync-jobs" element={<SyncJobsPage />} />
         <Route path="sync-jobs/:id" element={<SyncJobDetailPage />} />
+        <Route path="sources" element={<EndpointsPage />} />
         <Route path="datasets" element={<QueryTemplatesPage />} />
         <Route path="datasets/new" element={<QueryTemplateWizardPage />} />
         <Route path="datasets/:id/edit" element={<QueryTemplateWizardPage />} />

@@ -4,6 +4,7 @@ import {
   IconNotification,
   IconSettings,
   IconStorage,
+  IconSwap,
 } from '@arco-design/web-react/icon'
 import type { ComponentType } from 'react'
 
@@ -32,6 +33,12 @@ export const menuRoutes: MenuRoute[] = [
       { key: 'sync-jobs', name: 'datax任务', path: '/sync-jobs' },
       { key: 'collect-tasks', name: '采集任务', path: '/collect-tasks' },
     ],
+  },
+  {
+    key: 'etl',
+    name: 'ETL',
+    icon: IconSwap,
+    children: [{ key: 'sources', name: '源与目标', path: '/sources' }],
   },
   {
     key: 'operations',
@@ -81,6 +88,7 @@ export function selectedMenuKey(pathname: string): string {
 export function openMenuKeys(pathname: string): string[] {
   if (pathname === '/') return ['dashboard']
   if (pathname.startsWith('/data-sources') || pathname.startsWith('/datasets') || pathname.startsWith('/sync-jobs') || pathname.startsWith('/collect-tasks')) return ['data']
+  if (pathname.startsWith('/sources')) return ['etl']
   if (pathname.startsWith('/runs') || pathname.startsWith('/monitor')) return ['operations']
   if (pathname.startsWith('/alerts')) return ['alerts']
   return []
