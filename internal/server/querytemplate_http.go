@@ -172,6 +172,10 @@ func (s *Server) handleCreateQueryTemplate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据源失败")
 		return
 	}
+	if ds.Type == dataSourceTypeFileSystem {
+		writeError(w, http.StatusBadRequest, "invalid_data_source", "文件系统数据源不能用于数据集")
+		return
+	}
 
 	template := &store.QueryTemplate{
 		Name:         normalized.Name,
@@ -227,6 +231,10 @@ func (s *Server) handleUpdateQueryTemplate(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据源失败")
+		return
+	}
+	if ds.Type == dataSourceTypeFileSystem {
+		writeError(w, http.StatusBadRequest, "invalid_data_source", "文件系统数据源不能用于数据集")
 		return
 	}
 

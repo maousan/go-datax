@@ -344,6 +344,21 @@ func TestConnectionTestForSavedDataSource(t *testing.T) {
 	if !result.OK {
 		t.Errorf("saved connection test failed: %s", result.Message)
 	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"id":         created.ID,
+		"type":       "sqlite",
+		"properties": map[string]string{"path": dbPath},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("composed test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("composed response is not JSON: %v", err)
+	}
+	if !result.OK {
+		t.Errorf("composed saved connection test failed: %s", result.Message)
+	}
 }
 
 func TestConnectionTestReportsFailure(t *testing.T) {
@@ -750,6 +765,19 @@ func TestFileSystemDataSourceCrudAndTest(t *testing.T) {
 	}
 
 	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"id": created.ID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("id-only test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode id-only test result: %v", err)
+	}
+	if !result.OK {
+		t.Errorf("id-only filesystem test failed: %s", result.Message)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
 		"type":       "filesystem",
 		"properties": map[string]string{"basePath": root},
 	})
@@ -773,6 +801,16 @@ func TestFileSystemDataSourceCrudAndTest(t *testing.T) {
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing basePath status = %d, want 400", rec.Code)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, map[string]any{
+		"name":         "fs-dataset",
+		"dataSourceId": created.ID,
+		"sql":          "SELECT 1",
+		"columns":      []string{"id"},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("dataset over filesystem status = %d, want 400", rec.Code)
 	}
 
 	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/data-sources/"+itoa(created.ID)+"/schemas", token, nil)

@@ -3,6 +3,11 @@ import { apiDelete, apiGet, apiPost, apiPut } from './client'
 
 export type DataSourceType = 'mysql' | 'postgres' | 'sqlite' | 'mssql' | 'oracle' | 'filesystem'
 
+/** Whether a DataSource can be used by the DataX area and SQL explorers. */
+export function isJdbcDataSourceType(type: DataSourceType): boolean {
+  return type !== 'filesystem'
+}
+
 export interface DataSource {
   id: number
   name: string

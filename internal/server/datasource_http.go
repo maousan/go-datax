@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,15 +16,18 @@ import (
 	"github.com/longkeyy/go-datax/internal/store"
 )
 
-const maskedPassword = "******"
+const (
+	maskedPassword           = "******"
+	dataSourceTypeFileSystem = "filesystem"
+)
 
 var supportedDataSourceTypes = map[string]bool{
-	"mysql":      true,
-	"postgres":   true,
-	"sqlite":     true,
-	"mssql":      true,
-	"oracle":     true,
-	"filesystem": true,
+	"mysql":                  true,
+	"postgres":               true,
+	"sqlite":                 true,
+	"mssql":                  true,
+	"oracle":                 true,
+	dataSourceTypeFileSystem: true,
 }
 
 type dataSourceRequest struct {
@@ -178,19 +179,21 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(names) > 0 || len(templates) > 0 {
-		var parts []string
+		var dataxParts []string
 		if len(names) > 0 {
-			parts = append(parts, "datax任务："+strings.Join(names, "、"))
+			dataxParts = append(dataxParts, "datax任务："+strings.Join(names, "、"))
 		}
 		if len(templates) > 0 {
 			templateNames := make([]string, 0, len(templates))
 			for _, template := range templates {
 				templateNames = append(templateNames, template.Name)
 			}
-			parts = append(parts, "数据集："+strings.Join(templateNames, "、"))
+			dataxParts = append(dataxParts, "数据集："+strings.Join(templateNames, "、"))
 		}
+		groups := []string{"DataX 区：" + strings.Join(dataxParts, "；")}
+		// Pipeline 区的引用检查在控制面接入后追加。
 		writeError(w, http.StatusConflict, "data_source_in_use",
-			"该数据源被以下配置引用："+strings.Join(parts, "；"))
+			"该数据源被以下配置引用："+strings.Join(groups, "；"))
 		return
 	}
 
@@ -220,7 +223,7 @@ func mergeDataSource(existing store.DataSource, req dataSourceRequest) (store.Da
 	existing.Type = validated.Type
 	existing.JDBCUrl = validated.JDBCUrl
 	existing.Username = validated.Username
-	if validated.Type == "filesystem" {
+	if validated.Type == dataSourceTypeFileSystem {
 		existing.Password = ""
 	} else if validated.Password != "" && validated.Password != maskedPassword {
 		existing.Password = validated.Password
@@ -247,7 +250,7 @@ func validateDataSourceRequest(req dataSourceRequest) (dataSourceRequest, error)
 	if !supportedDataSourceTypes[req.Type] {
 		return req, fmt.Errorf("类型必须是 mysql、postgres、sqlite、mssql、oracle 或 filesystem")
 	}
-	if req.Type == "filesystem" {
+	if req.Type == dataSourceTypeFileSystem {
 		properties := map[string]string{}
 		if req.Properties != nil {
 			properties = *req.Properties
@@ -267,7 +270,11 @@ func validateDataSourceRequest(req dataSourceRequest) (dataSourceRequest, error)
 		return req, nil
 	}
 	if req.JDBCUrl == "" {
-		req.JDBCUrl = composeJDBCURL(req.Type, req.Properties)
+		var properties map[string]string
+		if req.Properties != nil {
+			properties = *req.Properties
+		}
+		req.JDBCUrl = composeJDBCURL(req.Type, properties)
 	}
 	if req.JDBCUrl == "" {
 		return req, fmt.Errorf("连接地址不能为空，或提供 host/port/database 等 connector 配置")
@@ -287,7 +294,7 @@ func validateDataSourceRequest(req dataSourceRequest) (dataSourceRequest, error)
 
 func toDataSourceResponse(ds store.DataSource) dataSourceResponse {
 	password := maskedPassword
-	if ds.Type == "filesystem" {
+	if ds.Type == dataSourceTypeFileSystem {
 		password = ""
 	}
 	return dataSourceResponse{
@@ -305,13 +312,13 @@ func toDataSourceResponse(ds store.DataSource) dataSourceResponse {
 }
 
 // composeJDBCURL builds a JDBC URL from connector properties when jdbcUrl is omitted.
-func composeJDBCURL(dsType string, properties *map[string]string) string {
+func composeJDBCURL(dsType string, properties map[string]string) string {
 	if properties == nil {
 		return ""
 	}
 	value := func(keys ...string) string {
 		for _, key := range keys {
-			if raw := strings.TrimSpace((*properties)[key]); raw != "" {
+			if raw := strings.TrimSpace(properties[key]); raw != "" {
 				return raw
 			}
 		}
@@ -321,6 +328,19 @@ func composeJDBCURL(dsType string, properties *map[string]string) string {
 	host := value("host")
 	port := value("port")
 	database := value("database")
+
+	if host != "" && strings.ContainsAny(host, "/?#;@ \t") {
+		return ""
+	}
+	if port != "" {
+		parsed, err := strconv.Atoi(port)
+		if err != nil || parsed < 1 || parsed > 65535 {
+			return ""
+		}
+	}
+	if !safeJDBCSegment(database) {
+		return ""
+	}
 
 	switch dsType {
 	case "sqlite":
@@ -336,7 +356,11 @@ func composeJDBCURL(dsType string, properties *map[string]string) string {
 		if port == "" {
 			port = "3306"
 		}
-		return "jdbc:mysql://" + net.JoinHostPort(host, port) + databasePath(database)
+		conn := "jdbc:mysql://" + net.JoinHostPort(host, port)
+		if database != "" {
+			conn += "/" + database
+		}
+		return conn
 	case "postgres":
 		if host == "" {
 			return ""
@@ -344,7 +368,11 @@ func composeJDBCURL(dsType string, properties *map[string]string) string {
 		if port == "" {
 			port = "5432"
 		}
-		return "jdbc:postgresql://" + net.JoinHostPort(host, port) + databasePath(database)
+		conn := "jdbc:postgresql://" + net.JoinHostPort(host, port)
+		if database != "" {
+			conn += "/" + database
+		}
+		return conn
 	case "mssql":
 		if host == "" {
 			return ""
@@ -365,7 +393,7 @@ func composeJDBCURL(dsType string, properties *map[string]string) string {
 			port = "1521"
 		}
 		service := value("service", "database")
-		if service == "" {
+		if service == "" || !safeJDBCSegment(service) {
 			return ""
 		}
 		return "jdbc:oracle:thin:@//" + net.JoinHostPort(host, port) + "/" + service
@@ -374,11 +402,16 @@ func composeJDBCURL(dsType string, properties *map[string]string) string {
 	}
 }
 
-func databasePath(database string) string {
-	if database == "" {
-		return ""
+func safeJDBCSegment(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_', r == '-', r == '.', r == '$':
+		default:
+			return false
+		}
 	}
-	return "/" + database
+	return true
 }
 
 func validJDBCURL(dsType, jdbcURL string) bool {
@@ -479,15 +512,15 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 			dsType = saved.Type
 		}
 	}
-	if dsType == "filesystem" {
+	if dsType == dataSourceTypeFileSystem {
 		properties := map[string]string{}
 		if req.Properties != nil {
 			properties = *req.Properties
 		}
-		if len(properties) == 0 && hasSaved {
-			properties = saved.Properties
-		}
 		basePath := strings.TrimSpace(properties["basePath"])
+		if basePath == "" && hasSaved {
+			basePath = strings.TrimSpace(saved.Properties["basePath"])
+		}
 		if basePath == "" {
 			writeError(w, http.StatusBadRequest, "invalid_request", "根目录不能为空")
 			return
@@ -496,7 +529,7 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "根目录必须是绝对路径")
 			return
 		}
-		result := testFileSystem(basePath)
+		result := connectiontest.TestFileSystem(basePath)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":        result.OK,
 			"latencyMs": result.LatencyMs,
@@ -507,21 +540,12 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var params connectiontest.Params
-	if req.ID > 0 {
-		ds, err := s.dataStore.GetDataSource(req.ID)
-		if errors.Is(err, store.ErrDataSourceNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "数据源不存在")
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "读取数据源失败")
-			return
-		}
+	if hasSaved {
 		params = connectiontest.Params{
-			Type:     ds.Type,
-			JDBCUrl:  ds.JDBCUrl,
-			Username: ds.Username,
-			Password: ds.Password,
+			Type:     saved.Type,
+			JDBCUrl:  saved.JDBCUrl,
+			Username: saved.Username,
+			Password: saved.Password,
 		}
 
 		// 编辑中的表单可能未保存，允许用提交字段覆盖已保存的连接信息；
@@ -531,6 +555,10 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 		}
 		if value := strings.TrimSpace(req.JDBCUrl); value != "" {
 			params.JDBCUrl = value
+		} else if req.Properties != nil {
+			if composed := composeJDBCURL(params.Type, *req.Properties); composed != "" {
+				params.JDBCUrl = composed
+			}
 		}
 		if value := strings.TrimSpace(req.Username); value != "" {
 			params.Username = value
@@ -573,30 +601,6 @@ func (s *Server) handleTestDataSource(w http.ResponseWriter, r *http.Request) {
 		"message":   result.Message,
 		"version":   result.Version,
 	})
-}
-
-func testFileSystem(basePath string) connectiontest.Result {
-	start := time.Now()
-	info, err := os.Stat(basePath)
-	if err != nil {
-		return connectiontest.Result{Message: err.Error()}
-	}
-	if !info.IsDir() {
-		return connectiontest.Result{Message: "根路径不是目录"}
-	}
-	dir, err := os.Open(basePath)
-	if err != nil {
-		return connectiontest.Result{Message: err.Error()}
-	}
-	defer dir.Close()
-	if _, err := dir.Readdirnames(1); err != nil && !errors.Is(err, io.EOF) {
-		return connectiontest.Result{Message: err.Error()}
-	}
-	return connectiontest.Result{
-		OK:        true,
-		LatencyMs: time.Since(start).Milliseconds(),
-		Message:   "目录可访问",
-	}
 }
 
 func dataSourceID(r *http.Request) (int64, error) {

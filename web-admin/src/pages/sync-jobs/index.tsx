@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../../api/client'
-import { useDataSources } from '../../api/dataSources'
+import { isJdbcDataSourceType, useDataSources } from '../../api/dataSources'
 import { useQueryTemplates } from '../../api/queryTemplates'
 import {
   exportSyncJob,
@@ -133,7 +133,7 @@ export default function SyncJobsPage() {
   const startRunMutation = useStartRun()
 
   const dataSourceOptions = (dataSourcesQuery.data ?? [])
-    .filter((item) => item.type !== 'filesystem')
+    .filter((item) => isJdbcDataSourceType(item.type))
     .map((item) => ({
       value: item.id,
       label: `${item.name}（${item.type}）`,

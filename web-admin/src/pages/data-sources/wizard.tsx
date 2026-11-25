@@ -175,14 +175,18 @@ export default function DataSourceWizard({
     }
     const editingMeta = typeMeta(editing.type)
     const parsed = parseJdbcUrl(editing.type, editing.jdbcUrl)
+    const storedHost = editing.properties?.host ?? ''
+    const storedPort = editing.properties?.port ?? ''
+    const storedDatabase = editing.properties?.database ?? ''
+    const storedPath = editing.properties?.path ?? ''
     return {
       parsed,
       values: {
         name: editing.name,
-        host: parsed?.host ?? '',
-        port: parsed?.port || editingMeta.defaultPort,
-        database: parsed?.database ?? '',
-        path: parsed?.path ?? '',
+        host: storedHost || parsed?.host || '',
+        port: storedPort || parsed?.port || editingMeta.defaultPort,
+        database: storedDatabase || parsed?.database || '',
+        path: storedPath || parsed?.path || '',
         username: editing.username ?? '',
         password: '',
         urlDraft: '',
@@ -424,6 +428,15 @@ export default function DataSourceWizard({
       }
     }
     delete properties.basePath
+    if (rawUrl === null) {
+      if (selectedType === 'sqlite') {
+        properties.path = String(values.path ?? '').trim()
+      } else {
+        properties.host = String(values.host ?? '').trim()
+        properties.port = String(values.port ?? '').trim()
+        properties.database = String(values.database ?? '').trim()
+      }
+    }
     return {
       name,
       type: selectedType,

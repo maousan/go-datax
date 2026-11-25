@@ -35,7 +35,7 @@ import 'dockview-react/dist/styles/dockview.css'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError } from '../../api/client'
-import { useDataSources } from '../../api/dataSources'
+import { isJdbcDataSourceType, useDataSources } from '../../api/dataSources'
 import { useRunQuery, type CellValue, type QueryResult } from '../../api/explorer'
 import {
   useCreateQueryTemplate,
@@ -177,7 +177,7 @@ function QueryTemplateWizard({ template }: { template?: QueryTemplate }) {
   const savedSql = templateInitialSQL(template)
 
   const dataSourceOptions = (sourcesQuery.data ?? [])
-    .filter((ds) => ds.type !== 'filesystem')
+    .filter((ds) => isJdbcDataSourceType(ds.type))
     .map((ds) => ({
       value: ds.id,
       label: `${ds.name}（${ds.type}）`,
