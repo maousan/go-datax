@@ -1,5 +1,6 @@
 import {
   CONNECTOR_META,
+  connectorDataSourceLabel,
   type ConnectorName,
   type Endpoint,
   type EndpointInput,
@@ -8,7 +9,7 @@ import {
 } from '../../api/endpoints'
 import type { DataSource } from '../../api/dataSources'
 
-export type WriteMode = 'insert' | 'truncate'
+export type WriteMode = 'insert' | 'truncate' | 'upsert'
 
 export interface EndpointDraft {
   name: string
@@ -102,7 +103,7 @@ export function validateEndpointDraft(
   const dataSource = dataSources.find((item) => item.id === draft.dataSourceId)
   if (!dataSource) return '数据源不存在'
   if (dataSource.type !== meta.dataSourceType) {
-    return `该连接器需要 ${meta.dataSourceType === 'sqlite' ? 'SQLite' : '文件系统'} 类型的数据源`
+    return `该连接器需要 ${connectorDataSourceLabel(draft.connector)} 类型的数据源`
   }
 
   if (!meta.file) {
@@ -129,6 +130,10 @@ export function validateEndpointDraft(
     }
   }
 
+  if (kind === 'sink' && draft.writeMode === 'upsert' && !supportsUpsert(draft.connector)) {
+    return '仅 MySQL/PostgreSQL 连接器支持 upsert'
+  }
+
   if (draft.schema.length === 0) return '请至少添加一个字段'
   const seen = new Set<string>()
   for (const [index, column] of draft.schema.entries()) {
@@ -139,6 +144,10 @@ export function validateEndpointDraft(
     seen.add(key)
   }
   return null
+}
+
+export function supportsUpsert(connector: ConnectorName): boolean {
+  return CONNECTOR_META[connector].upsert
 }
 
 export function endpointObjectLabel(endpoint: Endpoint): string {

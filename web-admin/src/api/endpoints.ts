@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPost, apiPut } from './client'
 
 export type EndpointKind = 'source' | 'sink'
-export type ConnectorName = 'sqlite' | 'csv' | 'txt' | 'jsonl'
+export type ConnectorName = 'mysql' | 'postgres' | 'sqlite' | 'csv' | 'txt' | 'jsonl'
 export type DataType =
   | 'int64'
   | 'float64'
@@ -57,20 +57,28 @@ export interface DiscoverInput {
 
 export interface ConnectorMeta {
   label: string
-  dataSourceType: 'sqlite' | 'filesystem'
+  dataSourceType: 'mysql' | 'postgres' | 'sqlite' | 'filesystem'
   file: boolean
+  upsert: boolean
 }
 
 export const CONNECTOR_META: Record<ConnectorName, ConnectorMeta> = {
-  sqlite: { label: 'SQLite', dataSourceType: 'sqlite', file: false },
-  csv: { label: 'CSV', dataSourceType: 'filesystem', file: true },
-  txt: { label: 'TXT', dataSourceType: 'filesystem', file: true },
-  jsonl: { label: 'JSONL', dataSourceType: 'filesystem', file: true },
+  mysql: { label: 'MySQL', dataSourceType: 'mysql', file: false, upsert: true },
+  postgres: { label: 'PostgreSQL', dataSourceType: 'postgres', file: false, upsert: true },
+  sqlite: { label: 'SQLite', dataSourceType: 'sqlite', file: false, upsert: false },
+  csv: { label: 'CSV', dataSourceType: 'filesystem', file: true, upsert: false },
+  txt: { label: 'TXT', dataSourceType: 'filesystem', file: true, upsert: false },
+  jsonl: { label: 'JSONL', dataSourceType: 'filesystem', file: true, upsert: false },
 }
 
 export const CONNECTOR_OPTIONS = (Object.keys(CONNECTOR_META) as ConnectorName[]).map(
   (value) => ({ value, label: CONNECTOR_META[value].label }),
 )
+
+export function connectorDataSourceLabel(connector: ConnectorName): string {
+  const meta = CONNECTOR_META[connector]
+  return meta.dataSourceType === 'filesystem' ? '文件系统' : meta.label
+}
 
 export const DATA_TYPE_OPTIONS: { value: DataType; label: string }[] = [
   { value: 'int64', label: 'int64' },

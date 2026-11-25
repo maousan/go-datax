@@ -44,6 +44,7 @@ describe('pipeline helpers', () => {
     expect(endpointObjectText(endpoint({ connector: 'csv', path: 'exports/orders.csv' }))).toBe(
       'exports/orders.csv',
     )
+    expect(endpointObjectText(endpoint({ connector: 'mysql', table: 'orders' }))).toBe('orders')
   })
 
   it('renders the pipeline chain', () => {

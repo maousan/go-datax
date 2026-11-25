@@ -32,6 +32,7 @@ import {
   CONNECTOR_META,
   CONNECTOR_OPTIONS,
   DATA_TYPE_OPTIONS,
+  connectorDataSourceLabel,
   discoverEndpoint,
   useCreateEndpoint,
   useDeleteEndpoint,
@@ -50,6 +51,7 @@ import styles from './index.module.less'
 import {
   endpointObjectLabel,
   endpointSchemaLabel,
+  supportsUpsert,
   toEndpointInput,
   validateEndpointDraft,
   type EndpointDraft,
@@ -94,7 +96,12 @@ function draftFromEndpoint(endpoint: Endpoint): EndpointDraft {
     query: endpoint.query,
     path: endpoint.path,
     splitPk: options.splitPk ?? '',
-    writeMode: options.writeMode === 'truncate' ? 'truncate' : 'insert',
+    writeMode:
+      options.writeMode === 'upsert'
+        ? 'upsert'
+        : options.writeMode === 'truncate'
+          ? 'truncate'
+          : 'insert',
     delimiter: options.delimiter ?? '',
     header:
       options.header !== undefined
@@ -243,7 +250,7 @@ function EndpointList({
       ellipsis: true,
       render: (_, endpoint) => {
         const objectLabel = endpointObjectLabel(endpoint)
-        if (endpoint.connector === 'sqlite' && endpoint.query) {
+        if (!CONNECTOR_META[endpoint.connector]?.file && endpoint.query) {
           return (
             <Tooltip
               content={
@@ -409,6 +416,7 @@ function EndpointModal({
       delimiter: nextMeta.file ? '' : previous.delimiter,
       header: nextMeta.file ? value === 'csv' : false,
       nullFormat: nextMeta.file ? '' : previous.nullFormat,
+      writeMode: supportsUpsert(value) ? previous.writeMode : 'insert',
     }))
   }
 
@@ -539,7 +547,7 @@ function EndpointModal({
             required
             extra={
               matchingDataSources.length === 0
-                ? `暂无${meta.dataSourceType === 'sqlite' ? ' SQLite' : '文件系统'}数据源，请先在「数据源」页面创建。`
+                ? `暂无 ${connectorDataSourceLabel(draft.connector)} 数据源，请先在「数据源」页面创建。`
                 : undefined
             }
           >
@@ -668,6 +676,9 @@ function EndpointModal({
                 options={[
                   { value: 'insert', label: '追加写入（insert）' },
                   { value: 'truncate', label: '清空后写入（truncate）' },
+                  ...(supportsUpsert(draft.connector)
+                    ? [{ value: 'upsert', label: '主键冲突时更新（upsert）' }]
+                    : []),
                 ]}
                 onChange={(value) => update({ writeMode: value as WriteMode })}
               />

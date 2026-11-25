@@ -1,4 +1,4 @@
-import type { SchemaColumn } from '../../api/endpoints'
+import { CONNECTOR_META, type SchemaColumn } from '../../api/endpoints'
 import type {
   Pipeline,
   PipelineEndpointSummary,
@@ -21,8 +21,8 @@ export function schemaText(schema: SchemaColumn[]): string {
 }
 
 export function endpointObjectText(endpoint: PipelineEndpointSummary): string {
-  if (endpoint.connector === 'sqlite') return endpoint.table || 'SQL 查询'
-  return endpoint.path || '-'
+  if (CONNECTOR_META[endpoint.connector]?.file) return endpoint.path || '-'
+  return endpoint.table || 'SQL 查询'
 }
 
 export function pipelineChain(pipeline: Pipeline): string {

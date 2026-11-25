@@ -77,6 +77,12 @@ All notable changes to this project will be documented in this file.
   - worker 每个批次执行 Transform 链：filter 丢弃行、project/cast 派生并转换值、rename/drop 调整字段；表达式求值或类型转换失败按步骤/行号 fail-fast
   - 源字段漂移导致草稿 Transform 失效时，Pipeline 列表/详情仍可读取，Transform 预览改为在编辑器中显示校验错误
   - Pipeline 草稿、版本与运行快照持久化 Transform；详情页新增可视化编辑器，支持增删/排序步骤、实时预览 schema 与目标一致性提示
+- **MySQL/PostgreSQL connector**:
+  - Source/Sink 新增 `mysql`、`postgres` 连接器，复用 connector-first DataSource；用户名/密码在运行时解析，不进入 Pipeline 版本快照
+  - Schema 自动发现映射 canonical 类型：整数、浮点、decimal（精确字符串）、string、bytes、bool、timestamp；NULL 原样保留
+  - Source 支持表或查询，按 int64 `splitPk` 拆 4 片并行读取；Sink 支持 `insert`、`truncate`、`upsert`，upsert 要求表有主键：MySQL 用 `ON DUPLICATE KEY UPDATE`（任意唯一键冲突都会更新），PostgreSQL 用 `ON CONFLICT (主键) DO UPDATE`
+  - 新增 env-gated conformance suite：`ETL_MYSQL_JDBC_URL`/`ETL_POSTGRES_JDBC_URL` 等存在时验证读写、类型映射、NULL、insert/truncate/upsert；未配置时 skip
+  - 「源与目标」连接器选项新增 MySQL/PostgreSQL；MySQL/PostgreSQL Sink 可选择 upsert
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

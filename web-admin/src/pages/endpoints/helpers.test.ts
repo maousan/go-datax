@@ -27,6 +27,8 @@ function dataSource(id: number, type: DataSource['type']): DataSource {
 
 const fileSource = dataSource(1, 'filesystem')
 const sqliteSource = dataSource(2, 'sqlite')
+const mysqlSource = dataSource(3, 'mysql')
+const postgresSource = dataSource(4, 'postgres')
 
 function draft(overrides: Partial<EndpointDraft> = {}): EndpointDraft {
   return {
@@ -61,6 +63,33 @@ describe('endpoint options', () => {
         }),
       ),
     ).toEqual({ splitPk: 'id' })
+  })
+
+  it('keeps mysql and postgres source/sink options', () => {
+    expect(
+      endpointOptions(
+        'source',
+        draft({
+          connector: 'mysql',
+          dataSourceId: mysqlSource.id,
+          table: 'orders',
+          path: '',
+          splitPk: 'id',
+        }),
+      ),
+    ).toEqual({ splitPk: 'id' })
+    expect(
+      endpointOptions(
+        'sink',
+        draft({
+          connector: 'postgres',
+          dataSourceId: postgresSource.id,
+          table: 'orders_copy',
+          path: '',
+          writeMode: 'upsert',
+        }),
+      ),
+    ).toEqual({ writeMode: 'upsert' })
   })
 
   it('writes the sqlite sink mode', () => {
@@ -134,6 +163,51 @@ describe('endpoint validation', () => {
     ).toContain('只能填写一个')
   })
 
+  it('accepts mysql and postgres drafts with matching data sources', () => {
+    expect(
+      validateEndpointDraft(
+        'source',
+        draft({
+          connector: 'mysql',
+          dataSourceId: mysqlSource.id,
+          table: 'orders',
+          path: '',
+          schema: [{ name: 'id', type: 'int64' }],
+        }),
+        [mysqlSource, postgresSource],
+      ),
+    ).toBeNull()
+    expect(
+      validateEndpointDraft(
+        'sink',
+        draft({
+          connector: 'postgres',
+          dataSourceId: postgresSource.id,
+          table: 'orders_copy',
+          path: '',
+          writeMode: 'upsert',
+        }),
+        [mysqlSource, postgresSource],
+      ),
+    ).toBeNull()
+  })
+
+  it('only allows upsert for mysql and postgres sinks', () => {
+    expect(
+      validateEndpointDraft(
+        'sink',
+        draft({
+          connector: 'sqlite',
+          dataSourceId: sqliteSource.id,
+          table: 'orders_copy',
+          path: '',
+          writeMode: 'upsert',
+        }),
+        [sqliteSource],
+      ),
+    ).toContain('upsert')
+  })
+
   it('rejects a data source of the wrong type', () => {
     expect(
       validateEndpointDraft('source', draft({ dataSourceId: sqliteSource.id }), [
@@ -186,6 +260,27 @@ describe('endpoint input and labels', () => {
     )
     expect(input.name).toBe('orders')
     expect(input.schema).toEqual([{ name: 'id', type: 'int64' }])
+  })
+
+  it('labels mysql and postgres tables', () => {
+    expect(
+      endpointObjectLabel({
+        id: 1,
+        kind: 'source',
+        name: 's',
+        description: '',
+        connector: 'mysql',
+        dataSourceId: 1,
+        dataSourceName: 'db',
+        table: 'orders',
+        query: '',
+        path: '',
+        schema: [],
+        options: {},
+        createdAt: '',
+        updatedAt: '',
+      }),
+    ).toBe('orders')
   })
 
   it('labels sqlite queries and file paths', () => {
