@@ -282,7 +282,7 @@ go-datax 附带一个单机 Web 管理台，用浏览器管理数据源与同步
 ### 构建
 
 ```bash
-# 一次构建前端 + datax + etl-server
+# 一次构建前端 + datax + etl-server + etl-worker
 make build
 
 # 或手动执行
@@ -300,6 +300,7 @@ go build -o dist/etl-server ./cmd/etl-server
 首次启动会创建 `server.json`，生成随机管理账号、bcrypt 密码与 JWT 密钥，并在控制台**只打印一次**初始密码。默认监听 `http://127.0.0.1:8080`。
 
 - `datax` 二进制需要位于 `etl-server` 同目录或 `PATH` 中，也可在配置里用 `datax.bin` 指定
+- `etl-server` 默认启动同目录的 `etl-worker`；可用 `worker.bin` 指定路径，或设置 `worker.url` + `worker.token` 连接外部 worker
 - `--config` 指定配置文件，`--listen` 覆盖监听地址，`--data-dir` 指定数据目录
 - 生成 bcrypt 密码哈希：`echo '新密码' | etl-server hash-password`
 

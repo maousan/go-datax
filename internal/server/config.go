@@ -34,6 +34,16 @@ type RuntimeConfig struct {
 	MaxConcurrent int `json:"maxConcurrent"`
 }
 
+// WorkerConfig 描述 etl-worker 的定位与连接方式。
+// URL 为空时由 etl-server 启动本地 worker；URL 非空时连接外部 worker，
+// 此时 Token 必填。Bin 为空时依次查找 etl-server 同目录与 PATH。
+type WorkerConfig struct {
+	URL    string `json:"url"`
+	Token  string `json:"token"`
+	Bin    string `json:"bin"`
+	Listen string `json:"listen"`
+}
+
 // AuthConfig 描述管理台的唯一账号与令牌设置。
 type AuthConfig struct {
 	Username  string `json:"username"`
@@ -48,6 +58,7 @@ type Config struct {
 	DataDir   string          `json:"dataDir"`
 	Auth      AuthConfig      `json:"auth"`
 	DataX     DataXConfig     `json:"datax"`
+	Worker    WorkerConfig    `json:"worker"`
 	Retention RetentionConfig `json:"retention"`
 	Runtime   RuntimeConfig   `json:"runtime"`
 
@@ -70,6 +81,9 @@ func DefaultConfig(dataDir string) Config {
 		},
 		Runtime: RuntimeConfig{
 			MaxConcurrent: defaultMaxConcurrent,
+		},
+		Worker: WorkerConfig{
+			Listen: "127.0.0.1:0",
 		},
 	}
 }
@@ -169,5 +183,8 @@ func applyDefaults(cfg *Config, dataDir string) {
 	}
 	if cfg.Runtime.MaxConcurrent <= 0 {
 		cfg.Runtime.MaxConcurrent = defaultMaxConcurrent
+	}
+	if cfg.Worker.Listen == "" {
+		cfg.Worker.Listen = "127.0.0.1:0"
 	}
 }

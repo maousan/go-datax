@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/longkeyy/go-datax/internal/execution"
@@ -122,6 +124,9 @@ func main() {
 	}
 
 	srv.StartScheduler()
+	if err := srv.StartWorker(); err != nil {
+		log.Printf("etl-worker 未启动（ETL 功能将不可用）: %v", err)
+	}
 
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
@@ -129,9 +134,21 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-shutdown
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(ctx)
+	}()
+
 	log.Printf("etl-server %s 监听 http://%s（数据目录：%s）", Version, cfg.Listen, cfg.DataDir)
 	log.Printf("datax 执行器: %s（%s）", dataxBin, dataxVersion)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = httpServer.ListenAndServe()
+	srv.StopScheduler()
+	srv.StopWorker()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("服务启动失败: %v", err)
 	}
 }

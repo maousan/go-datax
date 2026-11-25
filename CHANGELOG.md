@@ -38,6 +38,11 @@ All notable changes to this project will be documented in this file.
   - CLI 模式完全向后兼容，无破坏性变更
 
 ### Added
+- **etl-worker 独立执行器**:
+  - 新增 `etl-worker` 二进制与 HTTP/JSON + SSE 协议：shared token、诊断 run、进度、日志与取消
+  - `etl-server` 默认启动并监管本地 worker；支持 `worker.url` + `worker.token` 连接外部 worker
+  - worker 崩溃时在飞运行标记失败并自动重启；worker 不访问 `admin.db`
+  - 新增配置项 `worker.url`、`worker.token`、`worker.bin`、`worker.listen`
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

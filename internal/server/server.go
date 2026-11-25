@@ -30,6 +30,7 @@ type Server struct {
 	executor     *execution.Manager
 	alerts       *alert.Manager
 	scheduler    *collectScheduler
+	worker       *workerSupervisor
 	monitor      *monitor.Sampler
 	dataxVersion string
 	handler      http.Handler
@@ -66,6 +67,7 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 		}
 	}
 	s.scheduler = newCollectScheduler(s)
+	s.worker = newWorkerSupervisor(cfg.Worker)
 	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
 	s.monitor.Start()
 	s.applySavedRuntimeSettings()
@@ -85,6 +87,21 @@ func (s *Server) StartScheduler() {
 func (s *Server) StopScheduler() {
 	if s.scheduler != nil {
 		s.scheduler.Stop()
+	}
+}
+
+// StartWorker 启动本地 etl-worker，或连接配置里的外部 worker。
+func (s *Server) StartWorker() error {
+	if s.worker == nil {
+		return nil
+	}
+	return s.worker.Start()
+}
+
+// StopWorker 停止 etl-worker 监管循环。
+func (s *Server) StopWorker() {
+	if s.worker != nil {
+		s.worker.Stop()
 	}
 }
 
