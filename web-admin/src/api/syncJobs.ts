@@ -75,7 +75,7 @@ export interface SyncJobInput {
 export function useSyncJobs(query: string) {
   return useQuery({
     queryKey: ['sync-jobs', query],
-    queryFn: () => apiGet<SyncJob[]>(`/api/v1/sync-jobs?query=${encodeURIComponent(query)}`),
+    queryFn: () => apiGet<SyncJob[]>(`/api/v1/datax/sync-jobs?query=${encodeURIComponent(query)}`),
     refetchInterval: (query) =>
       query.state.data?.some((job) => job.lastRun?.status === 'running') ? 3000 : false,
   })
@@ -84,7 +84,7 @@ export function useSyncJobs(query: string) {
 export function useSyncJob(id: number) {
   return useQuery({
     queryKey: ['sync-jobs', 'detail', id],
-    queryFn: () => apiGet<SyncJob>(`/api/v1/sync-jobs/${id}`),
+    queryFn: () => apiGet<SyncJob>(`/api/v1/datax/sync-jobs/${id}`),
     enabled: Number.isFinite(id) && id > 0,
     refetchInterval: (query) =>
       query.state.data?.lastRun?.status === 'running' ? 3000 : false,
@@ -94,7 +94,7 @@ export function useSyncJob(id: number) {
 export function useSyncJobStats(id: number, days = 30) {
   return useQuery({
     queryKey: ['sync-jobs', 'detail', id, 'stats', days],
-    queryFn: () => apiGet<SyncJobStats>(`/api/v1/sync-jobs/${id}/stats?days=${days}`),
+    queryFn: () => apiGet<SyncJobStats>(`/api/v1/datax/sync-jobs/${id}/stats?days=${days}`),
     enabled: Number.isFinite(id) && id > 0,
     refetchInterval: (query) => (query.state.data?.running ? 3000 : false),
   })
@@ -108,7 +108,7 @@ function useInvalidateSyncJobs() {
 export function useCreateSyncJob() {
   const invalidate = useInvalidateSyncJobs()
   return useMutation({
-    mutationFn: (input: SyncJobInput) => apiPost<SyncJob>('/api/v1/sync-jobs', input),
+    mutationFn: (input: SyncJobInput) => apiPost<SyncJob>('/api/v1/datax/sync-jobs', input),
     onSuccess: invalidate,
   })
 }
@@ -117,7 +117,7 @@ export function useUpdateSyncJob() {
   const invalidate = useInvalidateSyncJobs()
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: SyncJobInput }) =>
-      apiPut<SyncJob>(`/api/v1/sync-jobs/${id}`, input),
+      apiPut<SyncJob>(`/api/v1/datax/sync-jobs/${id}`, input),
     onSuccess: invalidate,
   })
 }
@@ -125,7 +125,7 @@ export function useUpdateSyncJob() {
 export function useDeleteSyncJob() {
   const invalidate = useInvalidateSyncJobs()
   return useMutation({
-    mutationFn: (id: number) => apiDelete(`/api/v1/sync-jobs/${id}`),
+    mutationFn: (id: number) => apiDelete(`/api/v1/datax/sync-jobs/${id}`),
     onSuccess: invalidate,
   })
 }
@@ -133,7 +133,7 @@ export function useDeleteSyncJob() {
 export function useDuplicateSyncJob() {
   const invalidate = useInvalidateSyncJobs()
   return useMutation({
-    mutationFn: (id: number) => apiPost<SyncJob>(`/api/v1/sync-jobs/${id}/duplicate`, {}),
+    mutationFn: (id: number) => apiPost<SyncJob>(`/api/v1/datax/sync-jobs/${id}/duplicate`, {}),
     onSuccess: invalidate,
   })
 }
@@ -142,7 +142,7 @@ export function useImportSyncJob() {
   const invalidate = useInvalidateSyncJobs()
   return useMutation({
     mutationFn: (input: { name: string; config: unknown }) =>
-      apiPost<SyncJob>('/api/v1/sync-jobs/import', input),
+      apiPost<SyncJob>('/api/v1/datax/sync-jobs/import', input),
     onSuccess: invalidate,
   })
 }
@@ -150,7 +150,7 @@ export function useImportSyncJob() {
 export function useStartRun() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (jobId: number) => apiPost<Run>(`/api/v1/sync-jobs/${jobId}/runs`, {}),
+    mutationFn: (jobId: number) => apiPost<Run>(`/api/v1/datax/sync-jobs/${jobId}/runs`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['sync-jobs'] })
@@ -160,5 +160,5 @@ export function useStartRun() {
 }
 
 export async function exportSyncJob(id: number): Promise<unknown> {
-  return apiGet<unknown>(`/api/v1/sync-jobs/${id}/export`)
+  return apiGet<unknown>(`/api/v1/datax/sync-jobs/${id}/export`)
 }

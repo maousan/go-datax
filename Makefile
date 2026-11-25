@@ -53,7 +53,7 @@ tidy:
 	@echo "Tidying dependencies..."
 	@go mod tidy
 
-# Build frontend assets embedded into datax-server
+# Build frontend assets embedded into etl-server
 # clean 作为前置保证 dist 先清空，避免并行构建时嵌入旧产物或只剩占位文件。
 web: clean
 	@echo "Building web assets..."

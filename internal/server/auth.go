@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	tokenIssuer          = "datax-server"
+	tokenIssuer          = "etl-server"
 	defaultTokenTTL      = "12h"
 	minJWTSecretBytes    = 32
 	defaultPasswordChars = 24

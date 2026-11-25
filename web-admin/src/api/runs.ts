@@ -61,7 +61,7 @@ function runQuery(filters: RunFilters): string {
 export function useRuns(filters: RunFilters) {
   return useQuery({
     queryKey: ['runs', filters],
-    queryFn: () => apiGet<RunList>(`/api/v1/runs?${runQuery(filters)}`),
+    queryFn: () => apiGet<RunList>(`/api/v1/datax/runs?${runQuery(filters)}`),
     refetchInterval: (query) =>
       query.state.data?.items.some((run) => run.status === 'running') ? 2000 : false,
   })
@@ -70,7 +70,7 @@ export function useRuns(filters: RunFilters) {
 export function useRun(id: number) {
   return useQuery({
     queryKey: ['run', id],
-    queryFn: () => apiGet<Run>(`/api/v1/runs/${id}`),
+    queryFn: () => apiGet<Run>(`/api/v1/datax/runs/${id}`),
     enabled: id > 0,
     refetchInterval: (query) => (query.state.data?.status === 'running' ? 2000 : false),
   })
@@ -79,7 +79,7 @@ export function useRun(id: number) {
 export function useCancelRun() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) => apiFetch(`/api/v1/runs/${id}/cancel`, { method: 'POST' }),
+    mutationFn: (id: number) => apiFetch(`/api/v1/datax/runs/${id}/cancel`, { method: 'POST' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['run'] })
@@ -91,7 +91,7 @@ export function useCancelRun() {
 export function useRerunRun() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) => apiPost<Run>(`/api/v1/runs/${id}/rerun`, {}),
+    mutationFn: (id: number) => apiPost<Run>(`/api/v1/datax/runs/${id}/rerun`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['sync-jobs'] })
@@ -161,7 +161,7 @@ async function apiFetch(path: string, init: RequestInit): Promise<unknown> {
 
 export async function downloadRunArtifact(id: number, kind: 'log' | 'snapshot'): Promise<void> {
   const token = getToken()
-  const path = kind === 'log' ? `/api/v1/runs/${id}/log` : `/api/v1/runs/${id}/snapshot`
+  const path = kind === 'log' ? `/api/v1/datax/runs/${id}/log` : `/api/v1/datax/runs/${id}/snapshot`
   const response = await fetch(new URL(path, window.location.origin), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
@@ -195,7 +195,7 @@ export async function streamRunLogs(
 ): Promise<void> {
   const token = getToken()
   const response = await fetch(
-    new URL(`/api/v1/runs/${id}/logs/stream?offset=${offset}`, window.location.origin),
+    new URL(`/api/v1/datax/runs/${id}/logs/stream?offset=${offset}`, window.location.origin),
     {
       headers: {
         Accept: 'text/event-stream',

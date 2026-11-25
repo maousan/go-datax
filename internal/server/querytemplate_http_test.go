@@ -27,7 +27,7 @@ func TestQueryTemplateAndJob(t *testing.T) {
 	reader := createSQLiteDataSourceForJob(t, handler, token, "qt-reader", dir)
 	writer := createSQLiteDataSourceForJob(t, handler, token, "qt-writer", dir)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token,
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token,
 		queryTemplateBody(reader.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create template status = %d, body = %s", rec.Code, rec.Body.String())
@@ -44,7 +44,7 @@ func TestQueryTemplateAndJob(t *testing.T) {
 	body := formJobBody("template-job", 0, writer.ID)
 	formDef := body["form"].(map[string]any)
 	formDef["reader"] = map[string]any{"templateId": template.ID}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -63,7 +63,7 @@ func TestQueryTemplateAndJob(t *testing.T) {
 		t.Errorf("stored reader = %+v", job.Form)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -87,17 +87,17 @@ func TestQueryTemplateAndJob(t *testing.T) {
 	// 模板列数变化后，引用它的任务导出应明确失败。
 	updated := queryTemplateBody(reader.ID)
 	updated["columns"] = []string{"id", "name", "email"}
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/query-templates/"+itoa(template.ID), token, updated)
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/datasets/"+itoa(template.ID), token, updated)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update template status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "数量必须一致") {
 		t.Errorf("export after template change status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
 	// 引用中的模板不能删除。
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/query-templates/"+itoa(template.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/datasets/"+itoa(template.ID), token, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete referenced template status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -105,7 +105,7 @@ func TestQueryTemplateAndJob(t *testing.T) {
 		t.Errorf("delete template message = %s", rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete job status = %d", rec.Code)
 	}
@@ -116,7 +116,7 @@ func TestQueryTemplateAndJob(t *testing.T) {
 		t.Errorf("delete template data source status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/query-templates/"+itoa(template.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/datasets/"+itoa(template.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete template status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -136,19 +136,19 @@ func TestQueryTemplateValidation(t *testing.T) {
 
 	emptyColumns := queryTemplateBody(reader.ID)
 	emptyColumns["columns"] = []string{}
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, emptyColumns)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, emptyColumns)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("empty columns status = %d, want 400", rec.Code)
 	}
 
 	missingSource := queryTemplateBody(9999)
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, missingSource)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, missingSource)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing source status = %d, want 400", rec.Code)
 	}
 
 	body := queryTemplateBody(reader.ID)
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create template status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -156,7 +156,7 @@ func TestQueryTemplateValidation(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &template); err != nil {
 		t.Fatalf("template is not JSON: %v", err)
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, body)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("duplicate template status = %d, want 409", rec.Code)
 	}
@@ -167,7 +167,7 @@ func TestQueryTemplateValidation(t *testing.T) {
 	jobForm["reader"] = map[string]any{"templateId": template.ID}
 	jobWriter := jobForm["writer"].(map[string]any)
 	jobWriter["column"] = []string{"id", "name", "email"}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, jobBody)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, jobBody)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "数量必须一致") {
 		t.Errorf("mismatched columns status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -189,7 +189,7 @@ func TestQueryTemplateSQLAndJob(t *testing.T) {
 		"sql":          "SELECT id, name FROM users WHERE id > 0 ORDER BY id",
 		"columns":      []string{"id", "name"},
 	}
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, body)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create sql template status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -207,7 +207,7 @@ func TestQueryTemplateSQLAndJob(t *testing.T) {
 	jobBody := formJobBody("sql-template-job", 0, writer.ID)
 	jobForm := jobBody["form"].(map[string]any)
 	jobForm["reader"] = map[string]any{"templateId": template.ID}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, jobBody)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, jobBody)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -222,7 +222,7 @@ func TestQueryTemplateSQLAndJob(t *testing.T) {
 		t.Errorf("query template summary = %+v", job.QueryTemplate)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -252,7 +252,7 @@ func TestQueryTemplateSQLAndJob(t *testing.T) {
 		"sql":          "SELECT id FROM users; DROP TABLE users",
 		"columns":      []string{"id"},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/query-templates", token, invalid)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/datasets", token, invalid)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "一条 SQL") {
 		t.Errorf("multi statement status = %d, body = %s", rec.Code, rec.Body.String())
 	}

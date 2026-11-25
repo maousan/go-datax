@@ -29,7 +29,7 @@ export function useQueryTemplates(query = '') {
     queryKey: ['query-templates', query],
     queryFn: () =>
       apiGet<QueryTemplate[]>(
-        `/api/v1/query-templates?query=${encodeURIComponent(query)}`,
+        `/api/v1/datax/datasets?query=${encodeURIComponent(query)}`,
       ),
   })
 }
@@ -37,7 +37,7 @@ export function useQueryTemplates(query = '') {
 export function useQueryTemplate(id: number) {
   return useQuery({
     queryKey: ['query-templates', 'detail', id],
-    queryFn: () => apiGet<QueryTemplate>(`/api/v1/query-templates/${id}`),
+    queryFn: () => apiGet<QueryTemplate>(`/api/v1/datax/datasets/${id}`),
     enabled: Number.isFinite(id) && id > 0,
   })
 }
@@ -55,7 +55,7 @@ export function useCreateQueryTemplate() {
   const invalidate = useInvalidateQueryTemplates()
   return useMutation({
     mutationFn: (input: QueryTemplateInput) =>
-      apiPost<QueryTemplate>('/api/v1/query-templates', input),
+      apiPost<QueryTemplate>('/api/v1/datax/datasets', input),
     onSuccess: invalidate,
   })
 }
@@ -64,7 +64,7 @@ export function useUpdateQueryTemplate() {
   const invalidate = useInvalidateQueryTemplates()
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: QueryTemplateInput }) =>
-      apiPut<QueryTemplate>(`/api/v1/query-templates/${id}`, input),
+      apiPut<QueryTemplate>(`/api/v1/datax/datasets/${id}`, input),
     onSuccess: invalidate,
   })
 }
@@ -72,7 +72,7 @@ export function useUpdateQueryTemplate() {
 export function useDeleteQueryTemplate() {
   const invalidate = useInvalidateQueryTemplates()
   return useMutation({
-    mutationFn: (id: number) => apiDelete(`/api/v1/query-templates/${id}`),
+    mutationFn: (id: number) => apiDelete(`/api/v1/datax/datasets/${id}`),
     onSuccess: invalidate,
   })
 }

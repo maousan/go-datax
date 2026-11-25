@@ -46,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("DataX Admin Server %s\n", Version)
+		fmt.Printf("ETL Admin Server %s\n", Version)
 		return
 	}
 
@@ -129,7 +129,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("datax-server %s 监听 http://%s（数据目录：%s）", Version, cfg.Listen, cfg.DataDir)
+	log.Printf("etl-server %s 监听 http://%s（数据目录：%s）", Version, cfg.Listen, cfg.DataDir)
 	log.Printf("datax 执行器: %s（%s）", dataxBin, dataxVersion)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("服务启动失败: %v", err)
@@ -184,7 +184,7 @@ func resolveDataXBin(cfg server.Config) (string, string, error) {
 		return path, strings.TrimSpace(string(output)), nil
 	}
 
-	return "", "", fmt.Errorf("找不到 datax 可执行文件，请通过 datax.bin 配置或放到 datax-server 同目录")
+	return "", "", fmt.Errorf("找不到 datax 可执行文件，请通过 datax.bin 配置或放到 etl-server 同目录")
 }
 
 // runHashPassword 从标准输入读取明文并输出 bcrypt 哈希。

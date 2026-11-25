@@ -32,7 +32,7 @@ func TestCollectTaskCRUD(t *testing.T) {
 	token := loginToken(t, handler, "admin", "secret")
 	job := createRawJobForRuns(t, dataStore, "collect-definition")
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, createCollectTaskBody(job.ID))
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, createCollectTaskBody(job.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -50,7 +50,7 @@ func TestCollectTaskCRUD(t *testing.T) {
 		t.Errorf("retry/timeout = %+v", created)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/collect-tasks?query=minute", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/collect-tasks?query=minute", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d", rec.Code)
 	}
@@ -62,7 +62,7 @@ func TestCollectTaskCRUD(t *testing.T) {
 		t.Errorf("list = %+v", list)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/collect-tasks/"+itoa(created.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/collect-tasks/"+itoa(created.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d", rec.Code)
 	}
@@ -74,7 +74,7 @@ func TestCollectTaskCRUD(t *testing.T) {
 	body["retryMax"] = 0
 	body["retryIntervalSeconds"] = 0
 	body["timeoutSeconds"] = 0
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/collect-tasks/"+itoa(created.ID), token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/collect-tasks/"+itoa(created.ID), token, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -88,7 +88,7 @@ func TestCollectTaskCRUD(t *testing.T) {
 	}
 
 	// 任务定义被采集任务引用时不能删除。
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete referenced job status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -96,11 +96,11 @@ func TestCollectTaskCRUD(t *testing.T) {
 		t.Errorf("delete job message = %s", rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/collect-tasks/"+itoa(created.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/collect-tasks/"+itoa(created.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d", rec.Code)
 	}
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete job after task removed status = %d", rec.Code)
 	}
@@ -116,31 +116,31 @@ func TestCollectTaskValidation(t *testing.T) {
 
 	invalidCron := createCollectTaskBody(job.ID)
 	invalidCron["cronExpr"] = "0 0 * * *"
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, invalidCron)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, invalidCron)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid cron status = %d, want 400", rec.Code)
 	}
 
 	invalidPolicy := createCollectTaskBody(job.ID)
 	invalidPolicy["blockingPolicy"] = "queue"
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, invalidPolicy)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, invalidPolicy)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid policy status = %d, want 400", rec.Code)
 	}
 
 	invalidTimeout := createCollectTaskBody(job.ID)
 	invalidTimeout["timeoutSeconds"] = -1
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, invalidTimeout)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, invalidTimeout)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid timeout status = %d, want 400", rec.Code)
 	}
 
 	body := createCollectTaskBody(job.ID)
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, body)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("duplicate name status = %d, want 409", rec.Code)
 	}
@@ -155,7 +155,7 @@ func TestCollectTaskSchedulerRuns(t *testing.T) {
 	body := createCollectTaskBody(job.ID)
 	body["name"] = "every-second"
 	body["cronExpr"] = "* * * * * ?"
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/collect-tasks", token, body)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/collect-tasks", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
 	}

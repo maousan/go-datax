@@ -69,7 +69,7 @@ func prepareRunnableJob(t *testing.T, handler http.Handler, token string) syncJo
 	reader := createSQLiteDataSourceForJob(t, handler, token, "reader", dir)
 	writer := createSQLiteDataSourceForJob(t, handler, token, "writer", dir)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		formJobBody("runnable", reader.ID, writer.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
@@ -84,7 +84,7 @@ func prepareRunnableJob(t *testing.T, handler http.Handler, token string) syncJo
 func startRun(t *testing.T, handler http.Handler, token string, jobID int64) runResponse {
 	t.Helper()
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(jobID)+"/runs", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(jobID)+"/runs", token, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("start run status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -128,7 +128,7 @@ func TestRunLifecycleSuccess(t *testing.T) {
 		t.Errorf("exit code = %v, want 0", finished.ExitCode)
 	}
 
-	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs/"+itoa(run.ID), token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs/"+itoa(run.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get run status = %d", rec.Code)
 	}
@@ -140,7 +140,7 @@ func TestRunLifecycleSuccess(t *testing.T) {
 		t.Errorf("status = %q, want succeeded", detail.Status)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs/"+itoa(run.ID)+"/log", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs/"+itoa(run.ID)+"/log", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("log download status = %d", rec.Code)
 	}
@@ -148,12 +148,12 @@ func TestRunLifecycleSuccess(t *testing.T) {
 		t.Errorf("log does not contain the process output: %q", rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs/"+itoa(run.ID)+"/snapshot", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs/"+itoa(run.ID)+"/snapshot", token, nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"job"`) {
 		t.Errorf("snapshot response is wrong: %d %q", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs?jobId="+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs?jobId="+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list runs status = %d", rec.Code)
 	}
@@ -215,13 +215,13 @@ func TestRunCancel(t *testing.T) {
 
 	run := startRun(t, handler, token, job.ID)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(run.ID)+"/cancel", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(run.ID)+"/cancel", token, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("cancel status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	waitForRunStatus(t, dataStore, run.ID, store.RunStatusCanceled)
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(run.ID)+"/cancel", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(run.ID)+"/cancel", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("second cancel status = %d, want 200", rec.Code)
 	}
@@ -235,12 +235,12 @@ func TestRunSingleFlight(t *testing.T) {
 
 	run := startRun(t, handler, token, job.ID)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(job.ID)+"/runs", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/runs", token, nil)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("second start status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
 
-	_ = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(run.ID)+"/cancel", token, nil)
+	_ = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(run.ID)+"/cancel", token, nil)
 	waitForRunStatus(t, dataStore, run.ID, store.RunStatusCanceled)
 }
 
@@ -253,7 +253,7 @@ func TestRunGlobalConcurrencyLimit(t *testing.T) {
 	run := startRun(t, handler, token, firstJob.ID)
 
 	second := formJobBody("second", firstJob.Form.Reader.DataSourceID, firstJob.Form.Writer.DataSourceID)
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, second)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, second)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create second job status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -262,12 +262,12 @@ func TestRunGlobalConcurrencyLimit(t *testing.T) {
 		t.Fatalf("second job response is not JSON: %v", err)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(secondJob.ID)+"/runs", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(secondJob.ID)+"/runs", token, nil)
 	if rec.Code != http.StatusTooManyRequests {
 		t.Errorf("second job start status = %d, want 429 (body=%s)", rec.Code, rec.Body.String())
 	}
 
-	_ = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(run.ID)+"/cancel", token, nil)
+	_ = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(run.ID)+"/cancel", token, nil)
 	waitForRunStatus(t, dataStore, run.ID, store.RunStatusCanceled)
 }
 
@@ -283,7 +283,7 @@ func TestRunLogStreamReplay(t *testing.T) {
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
 
-	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/runs/"+itoa(run.ID)+"/logs/stream", nil)
+	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/datax/runs/"+itoa(run.ID)+"/logs/stream", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -313,12 +313,12 @@ func TestRunHistorySurvivesJobDeletion(t *testing.T) {
 	run := startRun(t, handler, token, job.ID)
 	waitForRunStatus(t, dataStore, run.ID, store.RunStatusSucceeded)
 
-	rec := authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete job status = %d", rec.Code)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list runs status = %d", rec.Code)
 	}
@@ -378,7 +378,7 @@ func TestRunProgressPersistedAndStreamed(t *testing.T) {
 		t.Fatalf("progress was not persisted: %+v", finished)
 	}
 
-	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/runs/"+itoa(run.ID), token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/runs/"+itoa(run.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get run status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -402,7 +402,7 @@ func TestRunProgressPersistedAndStreamed(t *testing.T) {
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
 
-	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/runs/"+itoa(run.ID)+"/logs/stream", nil)
+	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/datax/runs/"+itoa(run.ID)+"/logs/stream", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -447,7 +447,7 @@ func TestRunRerun(t *testing.T) {
 	first := startRun(t, handler, token, job.ID)
 	waitForRunStatus(t, dataStore, first.ID, store.RunStatusSucceeded)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(first.ID)+"/rerun", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(first.ID)+"/rerun", token, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("rerun status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -464,11 +464,11 @@ func TestRunRerun(t *testing.T) {
 	waitForRunStatus(t, dataStore, second.ID, store.RunStatusSucceeded)
 
 	// 任务删除后不能再重跑，但历史记录仍然保留。
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete job status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/runs/"+itoa(second.ID)+"/rerun", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/runs/"+itoa(second.ID)+"/rerun", token, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("rerun deleted job status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -495,7 +495,7 @@ func TestRunAutoRetry(t *testing.T) {
 	reqBody["retryMax"] = 1
 	reqBody["retryIntervalSeconds"] = 0
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, reqBody)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, reqBody)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -621,7 +621,7 @@ func TestRunRetryNotifications(t *testing.T) {
 	reqBody := formJobBody("retry-notify", reader.ID, writer.ID)
 	reqBody["retryMax"] = 1
 	reqBody["retryIntervalSeconds"] = 0
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, reqBody)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, reqBody)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
 	}

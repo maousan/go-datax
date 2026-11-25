@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - `GET/PUT /api/v1/settings/notifications` 与 `/test` 不再存在，改用 `GET/PUT /api/v1/alerts/config`、`POST /api/v1/alerts/config/test`
   - 首次启动时会自动把旧的 `notifications` 配置迁移为一条告警渠道，无需手工重配
   - 告警日志通过 `GET/DELETE /api/v1/alerts/logs` 查询与清理
+- **管理面更名为 `etl-server`，DataX API 加 `/datax` 前缀**:
+  - `datax-server` 二进制与 `cmd/datax-server` 不再存在，改用 `etl-server`；不保留别名，运维脚本需同步更新
+  - DataX 专属 API 移到 `/api/v1/datax/sync-jobs`、`/api/v1/datax/datasets`（原 `/api/v1/query-templates`）、`/api/v1/datax/collect-tasks`、`/api/v1/datax/runs`
+  - 共享 API（data-sources、alerts、monitor、settings、overview、auth、health）保持顶层
+  - JWT issuer 改为 `etl-server`，已有 token 失效一次，需要重新登录
+  - `datax` CLI、`admin.db` 与现有表名不变
 
 ### Changed
 - **架构改进**: 重构为无状态设计，支持灵活的执行模式

@@ -42,7 +42,7 @@ type AuthConfig struct {
 	JWTSecret string `json:"jwtSecret"`
 }
 
-// Config 是 datax-server 的完整配置。
+// Config 是 etl-server 的完整配置。
 type Config struct {
 	Listen    string          `json:"listen"`
 	DataDir   string          `json:"dataDir"`

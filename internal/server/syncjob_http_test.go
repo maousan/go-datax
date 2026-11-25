@@ -57,7 +57,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 	reader := createSQLiteDataSourceForJob(t, handler, token, "reader", dir)
 	writer := createSQLiteDataSourceForJob(t, handler, token, "writer", dir)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		formJobBody("users-sync", reader.ID, writer.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
@@ -77,7 +77,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 		t.Errorf("form definition not preserved: %+v", created.Form)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d", rec.Code)
 	}
@@ -89,7 +89,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 		t.Errorf("jobs = %+v, want users-sync", jobs)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(created.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(created.ID)+"/export", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -115,7 +115,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 		t.Errorf("channel = %v, want 2", channel)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(created.ID)+"/duplicate", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(created.ID)+"/duplicate", token, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("duplicate status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -127,7 +127,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 		t.Errorf("copy name = %q, want a 副本 suffix", copyJob.Name)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(created.ID), token, map[string]any{
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/sync-jobs/"+itoa(created.ID), token, map[string]any{
 		"name":          "users-sync-renamed",
 		"authoringMode": "form",
 		"form":          formJobBody("x", reader.ID, writer.ID)["form"],
@@ -136,7 +136,7 @@ func TestSyncJobFormCrudAndExport(t *testing.T) {
 		t.Fatalf("update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/sync-jobs/"+itoa(created.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/datax/sync-jobs/"+itoa(created.ID), token, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d", rec.Code)
 	}
@@ -153,18 +153,18 @@ func TestSyncJobValidation(t *testing.T) {
 
 	mismatch := formJobBody("mismatch", reader.ID, writer.ID)
 	mismatch["form"].(map[string]any)["writer"].(map[string]any)["column"] = []string{"id"}
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, mismatch)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, mismatch)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("column mismatch status = %d, want 400", rec.Code)
 	}
 
 	missing := formJobBody("missing-source", reader.ID, 9999)
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, missing)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, missing)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing data source status = %d, want 400", rec.Code)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, map[string]any{
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, map[string]any{
 		"name":          "bad-raw",
 		"authoringMode": "raw",
 		"raw":           map[string]any{"job": map[string]any{"content": []any{}}},
@@ -198,7 +198,7 @@ func TestSyncJobRawImportAndExport(t *testing.T) {
 		},
 	}
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/import", token, map[string]any{
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/import", token, map[string]any{
 		"name":   "stream-import",
 		"config": config,
 	})
@@ -213,7 +213,7 @@ func TestSyncJobRawImportAndExport(t *testing.T) {
 		t.Errorf("mode = %q, want raw", imported.AuthoringMode)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(imported.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(imported.ID)+"/export", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d", rec.Code)
 	}
@@ -226,7 +226,7 @@ func TestSyncJobRawImportAndExport(t *testing.T) {
 		t.Errorf("exported reader name changed: %+v", content["reader"])
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(imported.ID), token, map[string]any{
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/sync-jobs/"+itoa(imported.ID), token, map[string]any{
 		"name":          "stream-import",
 		"authoringMode": "form",
 		"form":          formJobBody("x", 1, 2)["form"],
@@ -254,7 +254,7 @@ func TestOracleFormJobExportUsesOraclePlugins(t *testing.T) {
 	}
 	created := decodeDataSource(t, rec)
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		formJobBody("oracle-sync", created.ID, created.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d, body = %s", rec.Code, rec.Body.String())
@@ -264,7 +264,7 @@ func TestOracleFormJobExportUsesOraclePlugins(t *testing.T) {
 		t.Fatalf("job response is not JSON: %v", err)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/export", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -298,7 +298,7 @@ func TestDataSourceDeleteBlockedWhenReferenced(t *testing.T) {
 	reader := createSQLiteDataSourceForJob(t, handler, token, "reader", dir)
 	writer := createSQLiteDataSourceForJob(t, handler, token, "writer", dir)
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		formJobBody("references-reader", reader.ID, writer.ID))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create job status = %d", rec.Code)
@@ -375,7 +375,7 @@ func TestSyncJobLastRunAndStats(t *testing.T) {
 	seedJobRun(t, dataStore, job, store.RunStatusCanceled, now.Add(-time.Hour), 90*time.Second, "")
 	running := seedJobRun(t, dataStore, job, store.RunStatusRunning, now.Add(-30*time.Minute), 0, "")
 
-	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -405,7 +405,7 @@ func TestSyncJobLastRunAndStats(t *testing.T) {
 		t.Errorf("empty job lastRun = %+v, want nil", emptyListed)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -417,7 +417,7 @@ func TestSyncJobLastRunAndStats(t *testing.T) {
 		t.Errorf("detail lastRun = %+v, want run %d", detail.LastRun, running.ID)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(job.ID)+"/stats?days=30", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(job.ID)+"/stats?days=30", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stats status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -452,7 +452,7 @@ func TestSyncJobLastRunAndStats(t *testing.T) {
 		t.Errorf("lastFailedRun = %+v, want run %d", stats.LastFailedRun, failed.ID)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(empty.ID)+"/stats", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(empty.ID)+"/stats", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("empty stats status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -468,7 +468,7 @@ func TestSyncJobLastRunAndStats(t *testing.T) {
 		t.Errorf("empty stats = %+v, want zero values", emptyStats)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/9999/stats", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/9999/stats", token, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown job stats status = %d, want 404", rec.Code)
 	}
@@ -487,7 +487,7 @@ func TestSyncJobRetryPolicy(t *testing.T) {
 	body["retryMax"] = 3
 	body["retryIntervalSeconds"] = 15
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, body)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -499,7 +499,7 @@ func TestSyncJobRetryPolicy(t *testing.T) {
 		t.Errorf("retry policy = %d/%ds, want 3/15s", created.RetryMax, created.RetryIntervalSeconds)
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/sync-jobs/"+itoa(created.ID), token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/datax/sync-jobs/"+itoa(created.ID), token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d", rec.Code)
 	}
@@ -514,7 +514,7 @@ func TestSyncJobRetryPolicy(t *testing.T) {
 	body["name"] = "retry-policy-updated"
 	body["retryMax"] = 0
 	body["retryIntervalSeconds"] = 30
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(created.ID), token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/sync-jobs/"+itoa(created.ID), token, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -527,7 +527,7 @@ func TestSyncJobRetryPolicy(t *testing.T) {
 	}
 
 	body["retryMax"] = 11
-	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/sync-jobs/"+itoa(created.ID), token, body)
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/datax/sync-jobs/"+itoa(created.ID), token, body)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid retryMax status = %d, want 400", rec.Code)
 	}
@@ -559,7 +559,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{rawStreamContent(), rawStreamContent()}},
 		},
 	}
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, multi)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, multi)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("multi content status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -580,7 +580,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{transformerContent}},
 		},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, transformer)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, transformer)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("transformer status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -606,7 +606,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{validTransformerContent}},
 		},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, validTransformer)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, validTransformer)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("valid transformer status = %d, want 201 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -626,7 +626,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{scriptContent}},
 		},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, scriptJob)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, scriptJob)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("dx_script status = %d, want 201 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -646,7 +646,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{badScriptContent}},
 		},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, badScript)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, badScript)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unsupported language") {
 		t.Fatalf("unsupported script language status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -658,7 +658,7 @@ func TestRawConfigGuardrails(t *testing.T) {
 			"job": map[string]any{"content": []any{rawStreamContent()}},
 		},
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token, single)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token, single)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("single content status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -688,31 +688,31 @@ func TestFormWriteModeValidation(t *testing.T) {
 		return body
 	}
 
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		withWriteMode("pg-update", pgWriter.ID, "update"))
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "不支持 writeMode") {
 		t.Fatalf("pg update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		withWriteMode("pg-insert", pgWriter.ID, "insert"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("pg insert status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		withWriteMode("oracle-update-no-keys", oracleWriter.ID, "update"))
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "需要指定主键列") {
 		t.Fatalf("oracle plain update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		withWriteMode("oracle-update-keys", oracleWriter.ID, "update(id)"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("oracle update(id) status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs", token,
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs", token,
 		withWriteMode("oracle-update-missing", oracleWriter.ID, "update(missing)"))
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "不在写入列中") {
 		t.Fatalf("oracle missing key status = %d, body = %s", rec.Code, rec.Body.String())
@@ -732,7 +732,7 @@ func TestLegacyRawGuardrailsOnRun(t *testing.T) {
 	if err := dataStore.CreateSyncJob(&multi); err != nil {
 		t.Fatalf("CreateSyncJob() failed: %v", err)
 	}
-	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(multi.ID)+"/runs", token, nil)
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(multi.ID)+"/runs", token, nil)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("legacy multi run status = %d, want 422 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -748,7 +748,7 @@ func TestLegacyRawGuardrailsOnRun(t *testing.T) {
 	if err := dataStore.CreateSyncJob(&transformer); err != nil {
 		t.Fatalf("CreateSyncJob() failed: %v", err)
 	}
-	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/sync-jobs/"+itoa(transformer.ID)+"/runs", token, nil)
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/datax/sync-jobs/"+itoa(transformer.ID)+"/runs", token, nil)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("legacy transformer run status = %d, want 422 (body=%s)", rec.Code, rec.Body.String())
 	}
