@@ -139,6 +139,10 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 				cancel()
 				if statusErr == nil {
 					s.setActive(id, state.Status)
+					if state.Status == worker.StatusQueued || state.Status == worker.StatusRunning {
+						s.setActive(id, worker.StatusFailed)
+						return worker.StatusFailed, fmt.Errorf("worker stream ended before run completion")
+					}
 					return state.Status, nil
 				}
 				s.setActive(id, worker.StatusFailed)
@@ -213,7 +217,14 @@ func (s *workerSupervisor) spawn() error {
 	}
 
 	cmd := exec.Command(bin, "--listen", s.cfg.Listen)
-	cmd.Env = append(os.Environ(), "ETL_WORKER_TOKEN="+token)
+	env := os.Environ()
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "ETL_WORKER_TOKEN=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	cmd.Env = append(filtered, "ETL_WORKER_TOKEN="+token)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("worker stdout: %w", err)
