@@ -56,13 +56,14 @@ function queryString(params: Record<string, string | number | undefined>): strin
   return search.toString()
 }
 
-export function useSchemas(dataSourceId: number) {
+export function useSchemas(dataSourceId: number, enabled = true) {
   return useQuery({
     queryKey: ['explorer', dataSourceId, 'schemas'],
     queryFn: () =>
       apiGet<{ schemas: Schema[] }>(`/api/v1/data-sources/${dataSourceId}/schemas`).then(
         (data) => data.schemas ?? [],
       ),
+    enabled: enabled && Number.isFinite(dataSourceId) && dataSourceId > 0,
   })
 }
 

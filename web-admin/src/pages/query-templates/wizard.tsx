@@ -176,10 +176,12 @@ function QueryTemplateWizard({ template }: { template?: QueryTemplate }) {
   const runQuery = useRunQuery(dataSourceId ?? 0)
   const savedSql = templateInitialSQL(template)
 
-  const dataSourceOptions = (sourcesQuery.data ?? []).map((ds) => ({
-    value: ds.id,
-    label: `${ds.name}（${ds.type}）`,
-  }))
+  const dataSourceOptions = (sourcesQuery.data ?? [])
+    .filter((ds) => ds.type !== 'filesystem')
+    .map((ds) => ({
+      value: ds.id,
+      label: `${ds.name}（${ds.type}）`,
+    }))
   const dataSourceName =
     (sourcesQuery.data ?? []).find((ds) => ds.id === dataSourceId)?.name ?? '-'
   const stale = Boolean(result) && sql !== resultSql

@@ -131,6 +131,10 @@ func (s *Server) withExplorer(
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取数据源失败")
 		return
 	}
+	if ds.Type == "filesystem" {
+		writeError(w, http.StatusBadRequest, "unsupported_operation", "文件系统数据源不支持数据库浏览")
+		return
+	}
 
 	explorer, err := dbexplorer.Open(r.Context(), ds)
 	if err != nil {

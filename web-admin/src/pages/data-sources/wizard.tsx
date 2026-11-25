@@ -99,7 +99,7 @@ function emptyForm(type: DataSourceType): WizardFormValues {
   const meta = typeMeta(type)
   return {
     name: '',
-    host: type === 'sqlite' ? '' : '127.0.0.1',
+    host: type === 'sqlite' || type === 'filesystem' ? '' : '127.0.0.1',
     port: meta.defaultPort,
     database: '',
     path: '',
@@ -131,7 +131,7 @@ function autoName(
 ): string {
   const meta = typeMeta(type)
   let suffix = values.host.trim()
-  if (type === 'sqlite') {
+  if (type === 'sqlite' || type === 'filesystem') {
     const file = values.path.trim().split('?')[0].split(/[\\/]/).filter(Boolean).pop() ?? ''
     suffix = file
   }
@@ -157,6 +157,21 @@ export default function DataSourceWizard({
   const [initial] = useState<{ parsed: ConnectionFields | null; values: WizardFormValues }>(() => {
     if (!editing) {
       return { parsed: null, values: emptyForm('mysql') }
+    }
+    if (editing.type === 'filesystem') {
+      return {
+        parsed: null,
+        values: {
+          name: editing.name,
+          host: '',
+          port: '',
+          database: '',
+          path: editing.properties?.basePath ?? '',
+          username: '',
+          password: '',
+          urlDraft: '',
+        },
+      }
     }
     const editingMeta = typeMeta(editing.type)
     const parsed = parseJdbcUrl(editing.type, editing.jdbcUrl)
@@ -188,7 +203,7 @@ export default function DataSourceWizard({
   const [sslMode, setSslMode] = useState<SslMode>(initial.parsed?.sslMode ?? 'default')
   const [params, setParams] = useState<ConnectionParam[]>(initial.parsed?.params ?? [])
   const [rawUrl, setRawUrl] = useState<string | null>(
-    editing && !initial.parsed ? editing.jdbcUrl : null,
+    editing && editing.type !== 'filesystem' && !initial.parsed ? editing.jdbcUrl : null,
   )
   const [urlError, setUrlError] = useState('')
   const [formError, setFormError] = useState('')
@@ -223,7 +238,11 @@ export default function DataSourceWizard({
   })
 
   const previewUrl =
-    rawUrl !== null ? rawUrl.trim() : buildJdbcUrl(selectedType, toConnectionFields(base))
+    selectedType === 'filesystem'
+      ? String(base.path ?? '').trim()
+      : rawUrl !== null
+        ? rawUrl.trim()
+        : buildJdbcUrl(selectedType, toConnectionFields(base))
 
   const customParamCount = params.filter((item) => item.key.trim() || item.value.trim()).length
 
@@ -249,7 +268,7 @@ export default function DataSourceWizard({
   const handleNext = () => {
     const currentPort = String(form.getFieldValue('port') ?? '')
     const standardPorts = DATA_SOURCE_TYPES.map((item) => item.defaultPort).filter(Boolean)
-    if (selectedType !== 'sqlite' && (!currentPort || standardPorts.includes(currentPort))) {
+    if (selectedType !== 'sqlite' && selectedType !== 'filesystem' && (!currentPort || standardPorts.includes(currentPort))) {
       form.setFieldValue('port', meta.defaultPort)
       setBase((previous) => ({ ...previous, port: meta.defaultPort }))
     }
@@ -318,6 +337,27 @@ export default function DataSourceWizard({
     setFormError('')
     setTestResult(null)
 
+    if (selectedType === 'filesystem') {
+      try {
+        const values = (await form.validate()) as WizardFormValues
+        const basePath = String(values.path ?? '').trim()
+        if (!basePath) {
+          setFormError('请输入根目录')
+          setActiveTab('basic')
+          return null
+        }
+        if (!/^([a-zA-Z]:[\\/]|\\\\|\/)/.test(basePath)) {
+          setFormError('根目录必须是绝对路径')
+          setActiveTab('basic')
+          return null
+        }
+        return values
+      } catch {
+        setActiveTab('basic')
+        return null
+      }
+    }
+
     if (rawUrl !== null) {
       const values = form.getFieldsValue() as WizardFormValues
       if (!rawUrl.trim()) {
@@ -359,21 +399,38 @@ export default function DataSourceWizard({
   }
 
   const resolveUrl = (values: WizardFormValues): string =>
-    rawUrl !== null ? rawUrl.trim() : buildJdbcUrl(selectedType, toConnectionFields(values))
+    selectedType === 'filesystem'
+      ? ''
+      : rawUrl !== null
+        ? rawUrl.trim()
+        : buildJdbcUrl(selectedType, toConnectionFields(values))
 
   const resolveInput = (values: WizardFormValues, url: string): DataSourceInput => {
     const label = autoName(selectedType, values, existingNames, editing?.name)
     const name = values.name?.trim() || label
+    const properties: Record<string, string> = {
+      ...(editing?.properties ?? {}),
+      [UI_COLOR_KEY]: color,
+    }
+    if (selectedType === 'filesystem') {
+      properties.basePath = String(values.path ?? '').trim()
+      return {
+        name,
+        type: 'filesystem',
+        jdbcUrl: '',
+        username: '',
+        password: '',
+        properties,
+      }
+    }
+    delete properties.basePath
     return {
       name,
       type: selectedType,
       jdbcUrl: url,
       username: selectedType === 'sqlite' ? '' : String(values.username ?? '').trim(),
       password: selectedType === 'sqlite' ? '' : values.password ?? '',
-      properties: {
-        ...(editing?.properties ?? {}),
-        [UI_COLOR_KEY]: color,
-      },
+      properties,
     }
   }
 
@@ -382,15 +439,17 @@ export default function DataSourceWizard({
     if (!values) return
 
     const url = resolveUrl(values)
-    if (!url) {
-      setFormError('请填写完整的连接信息')
-      setActiveTab('basic')
-      return
-    }
-    if (url.length > 500) {
-      setFormError('连接地址不能超过 500 个字符')
-      setActiveTab('basic')
-      return
+    if (selectedType !== 'filesystem') {
+      if (!url) {
+        setFormError('请填写完整的连接信息')
+        setActiveTab('basic')
+        return
+      }
+      if (url.length > 500) {
+        setFormError('连接地址不能超过 500 个字符')
+        setActiveTab('basic')
+        return
+      }
     }
 
     const input = resolveInput(values, url)
@@ -415,15 +474,17 @@ export default function DataSourceWizard({
     if (!values) return
 
     const url = resolveUrl(values)
-    if (!url) {
-      setFormError('请填写完整的连接信息')
-      setActiveTab('basic')
-      return
-    }
-    if (url.length > 500) {
-      setFormError('连接地址不能超过 500 个字符')
-      setActiveTab('basic')
-      return
+    if (selectedType !== 'filesystem') {
+      if (!url) {
+        setFormError('请填写完整的连接信息')
+        setActiveTab('basic')
+        return
+      }
+      if (url.length > 500) {
+        setFormError('连接地址不能超过 500 个字符')
+        setActiveTab('basic')
+        return
+      }
     }
 
     const input = resolveInput(values, url)
@@ -479,7 +540,7 @@ export default function DataSourceWizard({
             <Input
               allowClear
               prefix={<IconSearch />}
-              placeholder="搜索数据库类型"
+              placeholder="搜索数据源类型"
               className={styles.search}
               value={search}
               onChange={setSearch}
@@ -541,7 +602,7 @@ export default function DataSourceWizard({
             ))}
             {visibleTypes.length === 0 ? (
               <div className={styles['cards-empty']}>
-                <Empty description="没有匹配的数据库类型" />
+                <Empty description="没有匹配的数据源类型" />
               </div>
             ) : null}
           </div>
@@ -929,21 +990,38 @@ export default function DataSourceWizard({
     )
   }
 
-  const renderFormStep = () => (
-    <Tabs activeTab={activeTab} onChange={setActiveTab} className={styles.tabs}>
-      <Tabs.TabPane key="basic" title="连接信息">
+  const renderFormStep = () => {
+    if (selectedType === 'filesystem') {
+      return (
         <div className={styles['tab-pane']}>
-          {rawUrl !== null ? renderRawFields() : renderBasicFields()}
+          {renderBaseFields()}
+          <Form.Item
+            label="根目录"
+            field="path"
+            rules={[{ required: true, message: '请输入根目录' }]}
+            extra="使用绝对路径；文件系统数据源表示一个可复用的根目录，具体文件由 Pipeline 的 Source 选择。"
+          >
+            <Input placeholder={meta.databasePlaceholder} maxLength={500} />
+          </Form.Item>
         </div>
-      </Tabs.TabPane>
-      <Tabs.TabPane key="ssl" title="TLS/SSL" disabled={rawUrl !== null}>
-        <div className={styles['tab-pane']}>{renderSSL()}</div>
-      </Tabs.TabPane>
-      <Tabs.TabPane key="advanced" title="高级" disabled={rawUrl !== null}>
-        <div className={styles['tab-pane']}>{renderAdvanced()}</div>
-      </Tabs.TabPane>
-    </Tabs>
-  )
+      )
+    }
+    return (
+      <Tabs activeTab={activeTab} onChange={setActiveTab} className={styles.tabs}>
+        <Tabs.TabPane key="basic" title="连接信息">
+          <div className={styles['tab-pane']}>
+            {rawUrl !== null ? renderRawFields() : renderBasicFields()}
+          </div>
+        </Tabs.TabPane>
+        <Tabs.TabPane key="ssl" title="TLS/SSL" disabled={rawUrl !== null}>
+          <div className={styles['tab-pane']}>{renderSSL()}</div>
+        </Tabs.TabPane>
+        <Tabs.TabPane key="advanced" title="高级" disabled={rawUrl !== null}>
+          <div className={styles['tab-pane']}>{renderAdvanced()}</div>
+        </Tabs.TabPane>
+      </Tabs>
+    )
+  }
 
   return (
     <Modal
@@ -951,7 +1029,7 @@ export default function DataSourceWizard({
       title={
         <div className={styles.title}>
           <span>{editing ? '编辑数据源' : '新建数据源'}</span>
-          <span className={styles.subtitle}>{step === 1 ? '选择数据库类型' : '配置连接信息'}</span>
+          <span className={styles.subtitle}>{step === 1 ? '选择数据源类型' : '配置连接信息'}</span>
         </div>
       }
       footer={null}

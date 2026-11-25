@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file.
   - worker 崩溃时在飞运行标记失败并自动重启；worker 不访问 `admin.db`
   - 诊断运行写入 `pipeline_runs`（状态/起止/错误）；server 重启、worker 崩溃或外部连接中断时标记失败
   - 新增配置项 `worker.url`、`worker.token`、`worker.bin`、`worker.listen`
+- **connector-first DataSource**:
+  - DataSource 由类型 + connector 专用 Properties 驱动，JDBC URL 对非 JDBC 类型变为可选
+  - 新增 `filesystem` 类型（可复用根目录），支持目录连接测试；数据库浏览接口对文件系统返回明确错误
+  - 数据源向导按类型分支：文件系统只填写根目录，数据库仍保留 URL/参数/TLS；类型选择与详情页同步适配
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

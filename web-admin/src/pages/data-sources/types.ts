@@ -1,3 +1,4 @@
+import filesystemIcon from '../../assets/db-icons/filesystem.svg'
 import microsoftSqlServerIcon from '../../assets/db-icons/microsoftsqlserver.svg'
 import mysqlIcon from '../../assets/db-icons/mysql.svg'
 import oracleIcon from '../../assets/db-icons/oracle.svg'
@@ -5,7 +6,7 @@ import postgresIcon from '../../assets/db-icons/postgresql.svg'
 import sqliteIcon from '../../assets/db-icons/sqlite.svg'
 import type { DataSourceType } from '../../api/dataSources'
 
-export type DataSourceCategory = 'relational' | 'lightweight'
+export type DataSourceCategory = 'relational' | 'lightweight' | 'file'
 
 export interface DataSourceTypeMeta {
   value: DataSourceType
@@ -75,12 +76,24 @@ export const DATA_SOURCE_TYPES: DataSourceTypeMeta[] = [
     databasePlaceholder: '/data/app.db',
     urlPlaceholder: 'jdbc:sqlite:/data/app.db',
   },
+  {
+    value: 'filesystem',
+    label: '文件系统',
+    category: 'file',
+    defaultPort: '',
+    brandColor: '#86909C',
+    icon: filesystemIcon,
+    databaseLabel: '根目录',
+    databasePlaceholder: '/data/import',
+    urlPlaceholder: '',
+  },
 ]
 
 export const TYPE_CATEGORIES: Array<{ value: 'all' | DataSourceCategory; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'relational', label: '关系型数据库' },
   { value: 'lightweight', label: '轻量数据库' },
+  { value: 'file', label: '文件系统' },
 ]
 
 export const UI_COLOR_KEY = 'ui.color'

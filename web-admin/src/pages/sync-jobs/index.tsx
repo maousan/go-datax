@@ -132,10 +132,12 @@ export default function SyncJobsPage() {
   const importMutation = useImportSyncJob()
   const startRunMutation = useStartRun()
 
-  const dataSourceOptions = (dataSourcesQuery.data ?? []).map((item) => ({
-    value: item.id,
-    label: `${item.name}（${item.type}）`,
-  }))
+  const dataSourceOptions = (dataSourcesQuery.data ?? [])
+    .filter((item) => item.type !== 'filesystem')
+    .map((item) => ({
+      value: item.id,
+      label: `${item.name}（${item.type}）`,
+    }))
   const templateOptions = (templatesQuery.data ?? []).map((template) => ({
     value: template.id,
     label: template.sql

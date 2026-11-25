@@ -696,3 +696,118 @@ func TestMergeDataSourceKeepsPasswordWhenBlankOrMasked(t *testing.T) {
 		t.Errorf("password = %q, want new-secret", merged.Password)
 	}
 }
+
+func TestFileSystemDataSourceCrudAndTest(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+	root := t.TempDir()
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources", token, map[string]any{
+		"name":    "import-root",
+		"type":    "filesystem",
+		"jdbcUrl": "",
+		"properties": map[string]string{
+			"basePath": root,
+			"ui.color": "#123456",
+		},
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	created := decodeDataSource(t, rec)
+	if created.Type != "filesystem" {
+		t.Errorf("type = %q, want filesystem", created.Type)
+	}
+	if created.JDBCUrl != "" {
+		t.Errorf("jdbcUrl = %q, want empty", created.JDBCUrl)
+	}
+	if created.Password != "" {
+		t.Errorf("password = %q, want empty", created.Password)
+	}
+	if created.Properties["basePath"] != root {
+		t.Errorf("basePath = %q, want %q", created.Properties["basePath"], root)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"id":         created.ID,
+		"type":       "filesystem",
+		"properties": map[string]string{"basePath": root},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("saved test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode test result: %v", err)
+	}
+	if !result.OK {
+		t.Errorf("saved filesystem test failed: %s", result.Message)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"type":       "filesystem",
+		"properties": map[string]string{"basePath": root},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unsaved test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources/test", token, map[string]any{
+		"type":       "filesystem",
+		"properties": map[string]string{"basePath": "relative/path"},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("relative path test status = %d, want 400", rec.Code)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources", token, map[string]any{
+		"name":       "missing-root",
+		"type":       "filesystem",
+		"jdbcUrl":    "",
+		"properties": map[string]string{},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing basePath status = %d, want 400", rec.Code)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/data-sources/"+itoa(created.ID)+"/schemas", token, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("explorer status = %d, want 400", rec.Code)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodDelete, "/api/v1/data-sources/"+itoa(created.ID), token, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDataSourceComposesJDBCURLFromProperties(t *testing.T) {
+	handler := newTestHandler(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	})
+	token := loginToken(t, handler, "admin", "secret")
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/data-sources", token, map[string]any{
+		"name":     "composed-mysql",
+		"type":     "mysql",
+		"username": "root",
+		"password": "secret",
+		"properties": map[string]string{
+			"host":     "db.example.com",
+			"port":     "3306",
+			"database": "app",
+		},
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	created := decodeDataSource(t, rec)
+	if created.JDBCUrl != "jdbc:mysql://db.example.com:3306/app" {
+		t.Errorf("jdbcUrl = %q, want composed MySQL URL", created.JDBCUrl)
+	}
+}

@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Descriptions,
   Empty,
   Input,
   Space,
@@ -458,9 +459,9 @@ export default function DataSourceDetailPage() {
   const [filter, setFilter] = useState('')
 
   const dsQuery = useDataSource(dataSourceId)
-  const schemasQuery = useSchemas(dataSourceId)
-  const schemas = useMemo(() => schemasQuery.data ?? [], [schemasQuery.data])
   const ds = dsQuery.data
+  const schemasQuery = useSchemas(dataSourceId, ds ? ds.type !== 'filesystem' : false)
+  const schemas = useMemo(() => schemasQuery.data ?? [], [schemasQuery.data])
   const preferredSchema = useMemo(() => {
     const username = ds?.username?.toLowerCase()
     const mysqlDatabase = ds?.jdbcUrl.match(/^jdbc:mysql:\/\/[^/]+\/([^?;]+)/i)?.[1]
@@ -485,6 +486,52 @@ export default function DataSourceDetailPage() {
 
   if (!Number.isFinite(dataSourceId) || dataSourceId <= 0) {
     return <Alert type="error" content="无效的数据源编号" />
+  }
+
+  if (ds?.type === 'filesystem') {
+    const basePath = ds.properties?.basePath ?? ''
+    return (
+      <Card className={styles.workspace} bodyStyle={{ padding: 24 }}>
+        <div className={styles.header}>
+          <Space>
+            <Button icon={<IconLeft />} onClick={() => navigate('/data-sources')}>
+              返回
+            </Button>
+            <DataSourceTypeIcon
+              type={ds.type}
+              color={dataSourceColor(ds.type, ds.properties)}
+              size={26}
+            />
+            <Typography.Title heading={6} style={{ margin: 0 }}>
+              {ds.name}
+            </Typography.Title>
+            <Tag color="arcoblue">{typeMeta(ds.type).label}</Tag>
+          </Space>
+        </div>
+        <Descriptions
+          column={1}
+          labelStyle={{ width: 120 }}
+          style={{ marginTop: 20, maxWidth: 760 }}
+          data={[
+            {
+              label: '根目录',
+              value: (
+                <Typography.Text code copyable={{ text: basePath }}>
+                  {basePath || '-'}
+                </Typography.Text>
+              ),
+            },
+            { label: '创建时间', value: new Date(ds.createdAt).toLocaleString() },
+            { label: '更新时间', value: new Date(ds.updatedAt).toLocaleString() },
+          ]}
+        />
+        <Alert
+          type="info"
+          style={{ marginTop: 20 }}
+          content="文件系统数据源表示一个可复用的根目录；具体文件由 Pipeline 的 Source 选择。"
+        />
+      </Card>
+    )
   }
 
   return (
