@@ -28,6 +28,10 @@ jobs:
           cache: true
 
       - name: Run Go tests
+        # DB conformance tests are opt-in; future tests should skip when these are empty.
+        env:
+          ETL_TEST_MYSQL_DSN: ${{ secrets.ETL_TEST_MYSQL_DSN }}
+          ETL_TEST_POSTGRES_DSN: ${{ secrets.ETL_TEST_POSTGRES_DSN }}
         run: go test ./...
 
   web-test:

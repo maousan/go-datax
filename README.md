@@ -250,6 +250,8 @@ docker run --rm -v $(pwd)/config.json:/config.json ghcr.io/longkeyy/go-datax:lat
 
 ## 🧪 测试
 
+本地工具链与 CI 一致：Go 1.25、Node 22、pnpm 10；前端依赖以 `web-admin/pnpm-lock.yaml` 为准。
+
 ```bash
 # Go
 go test ./...
@@ -259,7 +261,7 @@ pnpm --dir web-admin install
 pnpm --dir web-admin test
 ```
 
-CI 默认只跑不依赖外部数据库的测试。MySQL/PostgreSQL 的 connector conformance 通过环境变量 DSN 启用；没有 DSN 时相关用例自动跳过。
+CI 默认只跑不依赖外部数据库的测试。MySQL/PostgreSQL 的 connector conformance 测试尚未实现，将在后续票补充；届时通过 `ETL_TEST_MYSQL_DSN` / `ETL_TEST_POSTGRES_DSN` 启用，未设置时跳过。
 
 ## 📖 文档
 

@@ -248,6 +248,21 @@ docker run --rm -v $(pwd)/config.json:/config.json ghcr.io/longkeyy/go-datax:lat
 
 **Total**: 21 data sources, 42 Reader/Writer plugins
 
+## 🧪 Testing
+
+Local toolchain matches CI: Go 1.25, Node 22, pnpm 10; `web-admin/pnpm-lock.yaml` is authoritative.
+
+```bash
+# Go
+go test ./...
+
+# Web admin
+pnpm --dir web-admin install
+pnpm --dir web-admin test
+```
+
+CI runs tests that do not require external databases. MySQL/PostgreSQL connector conformance tests are not implemented yet; they will be added in a follow-up and enabled via `ETL_TEST_MYSQL_DSN` / `ETL_TEST_POSTGRES_DSN`, skipping when unset.
+
 ## 📖 Documentation
 
 ### User Documentation
