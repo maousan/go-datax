@@ -24,6 +24,7 @@ import {
   IconPlayArrow,
   IconSave,
   IconSend,
+  IconUndo,
 } from '@arco-design/web-react/icon'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
@@ -34,7 +35,9 @@ import {
   usePipelineRuns,
   usePipelineVersions,
   usePublishPipeline,
+  useRestorePipelineVersion,
   useRunPipeline,
+  useRunPipelineVersion,
   useUpdatePipeline,
   type Pipeline,
   type PipelineRun,
@@ -48,6 +51,7 @@ import {
   pipelineChain,
   schemaText,
   schemasMatch,
+  triggerLabel,
 } from './helpers'
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -165,7 +169,7 @@ function PipelineDetailView({ pipelineId }: { pipelineId: number }) {
             />
           </Tabs.TabPane>
           <Tabs.TabPane key="versions" title="版本">
-            <VersionsTab pipelineId={pipeline.id} />
+            <VersionsTab pipelineId={pipeline.id} onRestored={() => setTab('draft')} />
           </Tabs.TabPane>
           <Tabs.TabPane key="schedules" title="调度">
             <Empty description="调度将在下一票接入；当前可手动运行最新发布版本。" />
@@ -280,8 +284,17 @@ function DraftEditor({
   const [error, setError] = useState('')
   const sources = sourcesQuery.data ?? []
   const sinks = sinksQuery.data ?? []
-  const source = sources.find((item) => item.id === sourceId)
-  const sink = sinks.find((item) => item.id === sinkId)
+  const selectedSource = sources.find((item) => item.id === sourceId)
+  const selectedSink = sinks.find((item) => item.id === sinkId)
+  const restoredFrom = pipeline.draftVersionNumber > 0
+  const source =
+    restoredFrom && sourceId === pipeline.sourceId
+      ? pipeline.source ?? selectedSource
+      : selectedSource
+  const sink =
+    restoredFrom && sinkId === pipeline.sinkId
+      ? pipeline.sink ?? selectedSink
+      : selectedSink
   const mismatch = Boolean(source && sink && !schemasMatch(source.schema, sink.schema))
   const dirty =
     name.trim() !== pipeline.name ||
@@ -338,6 +351,12 @@ function DraftEditor({
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
       {error ? <Alert type="error" content={error} closable onClose={() => setError('')} /> : null}
+      {restoredFrom ? (
+        <Alert
+          type="info"
+          content={`草稿由 v${pipeline.draftVersionNumber} 快照重建；直接发布会使用快照中的源/目标定义。修改源或目标后保存会清除快照。`}
+        />
+      ) : null}
       {mismatch ? (
         <Alert
           type="warning"
@@ -419,9 +438,41 @@ function DraftEditor({
   )
 }
 
-function VersionsTab({ pipelineId }: { pipelineId: number }) {
+function VersionsTab({
+  pipelineId,
+  onRestored,
+}: {
+  pipelineId: number
+  onRestored: () => void
+}) {
+  const navigate = useNavigate()
   const versionsQuery = usePipelineVersions(pipelineId)
+  const runVersion = useRunPipelineVersion()
+  const restoreVersion = useRestorePipelineVersion(pipelineId)
   const [snapshot, setSnapshot] = useState<PipelineVersion>()
+  const [actionError, setActionError] = useState('')
+
+  const run = async (version: PipelineVersion) => {
+    setActionError('')
+    try {
+      const run = await runVersion.mutateAsync(version.id)
+      navigate(`/pipeline-runs/${run.id}`)
+    } catch (err) {
+      setActionError(errorMessage(err, '启动版本运行失败'))
+    }
+  }
+
+  const restoreDraft = async (version: PipelineVersion) => {
+    setActionError('')
+    try {
+      await restoreVersion.mutateAsync(version.id)
+      Message.success(`已用 v${version.versionNumber} 重建草稿`)
+      onRestored()
+    } catch (err) {
+      setActionError(errorMessage(err, '重建草稿失败'))
+    }
+  }
+
   const columns: TableColumnProps<PipelineVersion>[] = [
     {
       title: '版本',
@@ -438,22 +489,60 @@ function VersionsTab({ pipelineId }: { pipelineId: number }) {
     },
     {
       title: '操作',
-      width: 100,
+      width: 220,
       render: (_, version) => (
-        <Tooltip content="查看快照">
-          <Button
-            type="text"
-            size="small"
-            aria-label={`查看版本 ${version.versionNumber} 快照`}
-            icon={<IconEye />}
-            onClick={() => setSnapshot(version)}
-          />
-        </Tooltip>
+        <Space size={2}>
+          <Tooltip content="运行此版本">
+            <Button
+              type="text"
+              size="small"
+              aria-label={`运行版本 ${version.versionNumber}`}
+              icon={<IconPlayArrow />}
+              loading={runVersion.isPending && runVersion.variables === version.id}
+              onClick={() => void run(version)}
+            />
+          </Tooltip>
+          <Tooltip content="用此版本重建草稿">
+            <Popconfirm
+              content="将草稿的源与目标切换到该版本，名称和说明保留。确认重建？"
+              okText="重建"
+              cancelText="取消"
+              onOk={() => void restoreDraft(version)}
+            >
+              <Button
+                type="text"
+                size="small"
+                aria-label={`从版本 ${version.versionNumber} 重建草稿`}
+                icon={<IconUndo />}
+                loading={
+                  restoreVersion.isPending && restoreVersion.variables === version.id
+                }
+              />
+            </Popconfirm>
+          </Tooltip>
+          <Tooltip content="查看快照">
+            <Button
+              type="text"
+              size="small"
+              aria-label={`查看版本 ${version.versionNumber} 快照`}
+              icon={<IconEye />}
+              onClick={() => setSnapshot(version)}
+            />
+          </Tooltip>
+        </Space>
       ),
     },
   ]
   return (
-    <>
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {actionError ? (
+        <Alert
+          type="error"
+          content={actionError}
+          closable
+          onClose={() => setActionError('')}
+        />
+      ) : null}
       <Table<PipelineVersion>
         rowKey="id"
         tableLayoutFixed
@@ -461,11 +550,11 @@ function VersionsTab({ pipelineId }: { pipelineId: number }) {
         data={versionsQuery.data ?? []}
         loading={versionsQuery.isLoading}
         pagination={false}
-        scroll={{ x: 700 }}
+        scroll={{ x: 820 }}
         noDataElement={<Empty description="还没有发布版本" />}
       />
       {snapshot ? <SnapshotModal version={snapshot} onClose={() => setSnapshot(undefined)} /> : null}
-    </>
+    </Space>
   )
 }
 
@@ -514,7 +603,7 @@ function RunsTab({ pipelineId }: { pipelineId: number }) {
       title: '触发',
       dataIndex: 'trigger',
       width: 100,
-      render: (value: string) => (value === 'manual' ? '手动' : value),
+      render: (value: string) => triggerLabel(value),
     },
     {
       title: '读取 / 写入',

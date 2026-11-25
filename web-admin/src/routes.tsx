@@ -41,6 +41,7 @@ export const menuRoutes: MenuRoute[] = [
     children: [
       { key: 'pipelines', name: 'Pipelines', path: '/pipelines' },
       { key: 'sources', name: '源与目标', path: '/sources' },
+      { key: 'pipeline-runs', name: '运行记录', path: '/pipeline-runs' },
     ],
   },
   {
@@ -82,7 +83,7 @@ export function flattenMenuRoutes(routes: MenuRoute[] = menuRoutes): MenuRoute[]
 }
 
 export function selectedMenuKey(pathname: string): string {
-  if (pathname.startsWith('/pipeline-runs')) return '/pipelines'
+  if (pathname.startsWith('/pipeline-runs')) return '/pipeline-runs'
   const matches = flattenMenuRoutes()
     .filter((route) => route.path && route.path !== '/' && pathname.startsWith(route.path))
     .sort((a, b) => (b.path?.length ?? 0) - (a.path?.length ?? 0))
@@ -116,7 +117,7 @@ export function breadcrumbFor(pathname: string): string[] {
   if (pathname.startsWith('/data-sources/')) return ['数据管理', '数据源', '数据源详情']
   if (pathname.startsWith('/sync-jobs/')) return ['数据管理', 'datax任务', '任务详情']
   if (pathname.startsWith('/pipelines/')) return ['ETL', 'Pipelines', 'Pipeline 详情']
-  if (pathname.startsWith('/pipeline-runs/')) return ['ETL', 'Pipelines', '运行详情']
+  if (pathname.startsWith('/pipeline-runs/')) return ['ETL', '运行记录', '运行详情']
   if (pathname.startsWith('/runs/')) return ['运行中心', '运行历史', '运行详情']
   const groups = findGroup(pathname)
   const leaf = flattenMenuRoutes().find((route) => route.path === pathname)

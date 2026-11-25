@@ -3,23 +3,27 @@ import {
   Button,
   Card,
   Descriptions,
+  Message,
   Space,
   Spin,
   Statistic,
   Typography,
 } from '@arco-design/web-react'
-import { IconDownload, IconLeft } from '@arco-design/web-react/icon'
+import { IconDownload, IconLeft, IconRefresh, IconStop } from '@arco-design/web-react/icon'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import {
   downloadPipelineRunLog,
   streamPipelineRunEvents,
+  useCancelPipelineRun,
   usePipelineRun,
+  useRerunPipelineRun,
   type PipelineRunEvent,
 } from '../../api/pipelines'
 import RunStatusTag from '../../components/RunStatusTag'
 import { formatCount, formatDuration, formatTime } from '../../utils/format'
+import { triggerLabel } from '../pipelines/helpers'
 import styles from './detail.module.less'
 
 export default function PipelineRunDetailPage() {
@@ -35,6 +39,8 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const runQuery = usePipelineRun(runId)
+  const cancelMutation = useCancelPipelineRun(runId)
+  const rerunMutation = useRerunPipelineRun(runId)
   const [lines, setLines] = useState<string[]>([])
   const [live, setLive] = useState<PipelineRunEvent>()
   const [streamError, setStreamError] = useState('')
@@ -100,6 +106,27 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
     }
   }
 
+  const handleCancel = async () => {
+    setActionError('')
+    try {
+      await cancelMutation.mutateAsync()
+      Message.success('已请求停止')
+      void queryClient.invalidateQueries({ queryKey: ['pipeline-run', runId] })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '停止运行失败')
+    }
+  }
+
+  const handleRerun = async () => {
+    setActionError('')
+    try {
+      const next = await rerunMutation.mutateAsync()
+      navigate(`/pipeline-runs/${next.id}`)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '重跑失败')
+    }
+  }
+
   const status = live?.status ?? run?.status
   const readRecords = live?.readRecords ?? run?.readRecords ?? 0
   const writeRecords = live?.writeRecords ?? run?.writeRecords ?? 0
@@ -122,7 +149,7 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
           ),
         },
         { label: '版本', value: run.versionNumber > 0 ? `v${run.versionNumber}` : '-' },
-        { label: '触发方式', value: run.trigger === 'manual' ? '手动' : run.trigger },
+        { label: '触发方式', value: triggerLabel(run.trigger) },
         { label: '开始时间', value: formatTime(run.startedAt) },
         { label: '结束时间', value: formatTime(run.finishedAt) },
         { label: '耗时', value: formatDuration(run.startedAt, run.finishedAt) },
@@ -156,9 +183,31 @@ function PipelineRunDetailView({ runId }: { runId: number }) {
           </Space>
         }
         extra={
-          <Button icon={<IconDownload />} onClick={handleDownload}>
-            下载日志
-          </Button>
+          <Space>
+            {status === 'running' ? (
+              <Button
+                type="primary"
+                status="danger"
+                icon={<IconStop />}
+                loading={cancelMutation.isPending}
+                onClick={() => void handleCancel()}
+              >
+                停止
+              </Button>
+            ) : null}
+            {status === 'failed' ? (
+              <Button
+                icon={<IconRefresh />}
+                loading={rerunMutation.isPending}
+                onClick={() => void handleRerun()}
+              >
+                重跑
+              </Button>
+            ) : null}
+            <Button icon={<IconDownload />} onClick={handleDownload}>
+              下载日志
+            </Button>
+          </Space>
         }
       >
         <Descriptions column={3} data={details} />

@@ -52,6 +52,7 @@ export interface Pipeline {
   sinkId: number
   source: PipelineEndpointSummary | null
   sink: PipelineEndpointSummary | null
+  draftVersionNumber: number
   latestVersion: PipelineVersionSummary | null
   lastRun: PipelineRun | null
   createdAt: string
@@ -209,6 +210,58 @@ export function useRunPipeline(id: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pipeline', id] })
       queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+    },
+  })
+}
+
+export function useRunPipelineVersion() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (versionId: number) =>
+      apiPost<PipelineRun>(`/api/v1/pipeline-versions/${versionId}/runs`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+    },
+  })
+}
+
+export function useRestorePipelineVersion(pipelineId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (versionId: number) =>
+      apiPost<Pipeline>(
+        `/api/v1/pipelines/${pipelineId}/versions/${versionId}/restore`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipeline', pipelineId] })
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+    },
+  })
+}
+
+export function useCancelPipelineRun(runId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost(`/api/v1/pipeline-runs/${runId}/cancel`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipeline-run', runId] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline'] })
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+    },
+  })
+}
+
+export function useRerunPipelineRun(runId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<PipelineRun>(`/api/v1/pipeline-runs/${runId}/rerun`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline'] })
       queryClient.invalidateQueries({ queryKey: ['pipelines'] })
     },
   })

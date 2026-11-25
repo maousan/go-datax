@@ -6,6 +6,7 @@ import {
   pipelineChain,
   schemaText,
   schemasMatch,
+  triggerLabel,
 } from './helpers'
 
 const schema: SchemaColumn[] = [
@@ -50,5 +51,11 @@ describe('pipeline helpers', () => {
       sink: endpoint({ name: 'dst' }),
     } as Pipeline
     expect(pipelineChain(pipeline)).toBe('src → dst')
+  })
+
+  it('labels run triggers', () => {
+    expect(triggerLabel('manual')).toBe('手动')
+    expect(triggerLabel('rerun')).toBe('重跑')
+    expect(triggerLabel('schedule')).toBe('schedule')
   })
 })

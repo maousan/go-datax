@@ -11,6 +11,7 @@ import LoginPage from './pages/login'
 import MonitorPage from './pages/monitor'
 import OverviewPage from './pages/overview'
 import PipelineRunDetailPage from './pages/pipeline-runs/detail'
+import PipelineRunsPage from './pages/pipeline-runs'
 import PipelineDetailPage from './pages/pipelines/detail'
 import PipelinesPage from './pages/pipelines'
 import QueryTemplatesPage from './pages/query-templates'
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="sources" element={<EndpointsPage />} />
         <Route path="pipelines" element={<PipelinesPage />} />
         <Route path="pipelines/:id" element={<PipelineDetailPage />} />
+        <Route path="pipeline-runs" element={<PipelineRunsPage />} />
         <Route path="pipeline-runs/:id" element={<PipelineRunDetailPage />} />
         <Route path="datasets" element={<QueryTemplatesPage />} />
         <Route path="datasets/new" element={<QueryTemplateWizardPage />} />

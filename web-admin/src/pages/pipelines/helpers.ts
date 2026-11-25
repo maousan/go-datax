@@ -25,3 +25,13 @@ export function pipelineChain(pipeline: Pipeline): string {
   const sink = pipeline.sink?.name ?? '-'
   return `${source} → ${sink}`
 }
+
+const TRIGGER_LABELS: Record<string, string> = {
+  manual: '手动',
+  rerun: '重跑',
+  diagnostic: '诊断',
+}
+
+export function triggerLabel(trigger: string): string {
+  return TRIGGER_LABELS[trigger] ?? trigger
+}

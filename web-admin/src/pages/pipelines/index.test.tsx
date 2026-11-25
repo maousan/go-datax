@@ -68,27 +68,8 @@ beforeAll(() => server.listen())
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-
 describe('PipelinesPage', () => {
   it('creates a pipeline from the modal', async () => {
-    const originalResizeObserver = globalThis.ResizeObserver
-    const originalMatchMedia = window.matchMedia
-    globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
-    window.matchMedia = ((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    })) as unknown as typeof window.matchMedia
     let created: Record<string, unknown> | null = null
     server.use(
       http.post(/\/api\/v1\/pipelines$/, async ({ request }) => {
@@ -141,7 +122,5 @@ describe('PipelinesPage', () => {
       sourceId: 11,
       sinkId: 12,
     })
-    globalThis.ResizeObserver = originalResizeObserver
-    window.matchMedia = originalMatchMedia
   })
 })
