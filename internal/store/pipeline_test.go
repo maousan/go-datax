@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPipelineAndVersionCRUD(t *testing.T) {
@@ -83,6 +84,62 @@ func TestPipelineAndVersionCRUD(t *testing.T) {
 	}
 	if len(versions) != 2 || versions[0].VersionNumber != 2 || versions[1].VersionNumber != 1 {
 		t.Fatalf("versions = %+v", versions)
+	}
+}
+
+func TestPipelineRunPrune(t *testing.T) {
+	dataStore, err := Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataStore.Close()
+
+	for index := 0; index < 3; index++ {
+		run := &PipelineRun{
+			PipelineName: "orders",
+			Status:       PipelineRunStatusSucceeded,
+			Trigger:      PipelineRunTriggerManual,
+			StartedAt:    time.Now().Add(-time.Duration(3-index) * time.Hour),
+		}
+		if err := dataStore.CreatePipelineRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruned, err := dataStore.ListPipelineRunsForPrune(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pruned) != 2 {
+		t.Fatalf("pruned = %d, want 2", len(pruned))
+	}
+	for _, run := range pruned {
+		if err := dataStore.DeletePipelineRun(run.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs, total, err := dataStore.ListPipelineRuns(PipelineRunFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(runs) != 1 {
+		t.Fatalf("remaining runs = %+v total = %d", runs, total)
+	}
+
+	expired := &PipelineRun{
+		PipelineName: "expired",
+		Status:       PipelineRunStatusSucceeded,
+		Trigger:      PipelineRunTriggerManual,
+		StartedAt:    time.Now().AddDate(0, 0, -2),
+	}
+	if err := dataStore.CreatePipelineRun(expired); err != nil {
+		t.Fatal(err)
+	}
+	agePruned, err := dataStore.ListPipelineRunsForPrune(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agePruned) != 1 || agePruned[0].ID != expired.ID {
+		t.Fatalf("age prune = %+v, want run %d", agePruned, expired.ID)
 	}
 }
 

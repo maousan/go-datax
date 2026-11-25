@@ -72,6 +72,7 @@ func (s *Server) mergePipelineRunLive(response *pipelineRunResponse) {
 }
 
 func (s *Server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request) {
+	s.prunePipelineRuns()
 	filter := parsePipelineRunFilter(r)
 	runs, total, err := s.dataStore.ListPipelineRuns(filter)
 	if err != nil {

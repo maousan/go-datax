@@ -252,6 +252,25 @@ func (s *workerSupervisor) CancelRun(ctx context.Context, id string) error {
 	return client.CancelRun(ctx, id)
 }
 
+var errPipelineRunNotActive = errors.New("pipeline run is not active")
+
+// CancelPipelineRun cancels the worker run tracked by a persisted PipelineRun.
+func (s *workerSupervisor) CancelPipelineRun(ctx context.Context, pipelineRunID int64) error {
+	s.mu.Lock()
+	workerRunID := ""
+	for id, run := range s.runs {
+		if run.pipelineRunID == pipelineRunID && run.status.IsActive() {
+			workerRunID = id
+			break
+		}
+	}
+	s.mu.Unlock()
+	if workerRunID == "" {
+		return errPipelineRunNotActive
+	}
+	return s.CancelRun(ctx, workerRunID)
+}
+
 // RunStatus returns the last known status of a diagnostic or pipeline run.
 func (s *workerSupervisor) RunStatus(id string) worker.RunStatus {
 	s.mu.Lock()

@@ -16,13 +16,17 @@ var (
 
 // Pipeline is the editable draft of one linear Pipeline.
 type Pipeline struct {
-	ID          int64  `gorm:"primaryKey"`
-	Name        string `gorm:"size:100;uniqueIndex;not null"`
-	Description string `gorm:"size:500"`
-	SourceID    int64  `gorm:"index;not null"`
-	SinkID      int64  `gorm:"index;not null"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                 int64  `gorm:"primaryKey"`
+	Name               string `gorm:"size:100;uniqueIndex;not null"`
+	Description        string `gorm:"size:500"`
+	SourceID           int64  `gorm:"index;not null"`
+	SinkID             int64  `gorm:"index;not null"`
+	DraftSourceJSON    string `gorm:"column:draft_source_json;type:text"`
+	DraftSinkJSON      string `gorm:"column:draft_sink_json;type:text"`
+	DraftVersionID     *int64 `gorm:"column:draft_version_id"`
+	DraftVersionNumber int    `gorm:"column:draft_version_number;not null;default:0"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // PipelineVersion is an immutable published snapshot.

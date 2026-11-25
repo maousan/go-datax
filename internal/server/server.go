@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
 	"net/http"
 	"path"
 	"strings"
@@ -74,6 +73,7 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
 	s.monitor.Start()
 	s.applySavedRuntimeSettings()
+	s.prunePipelineRuns()
 
 	s.handler = s.routes()
 	return s, nil
@@ -112,20 +112,9 @@ func (s *Server) applySavedRuntimeSettings() {
 	if s.executor == nil {
 		return
 	}
-	raw, found, err := s.dataStore.GetSetting(runtimeSettingKey)
-	if err != nil || !found || strings.TrimSpace(raw) == "" {
-		return
+	if settings, ok := s.savedRuntimeSettings(); ok {
+		s.executor.UpdateRuntime(settings)
 	}
-	var settings execution.RuntimeSettings
-	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
-		log.Printf("忽略无法解析的运行参数设置: %v", err)
-		return
-	}
-	if err := validateRuntimeSettings(settings); err != nil {
-		log.Printf("忽略无效的运行参数设置: %v", err)
-		return
-	}
-	s.executor.UpdateRuntime(settings)
 }
 
 // authSnapshot 返回当前认证配置与令牌服务的快照。
@@ -174,12 +163,16 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("/api/v1/pipelines/{id}", methodNotAllowed("GET, PUT"))
 	protected.HandleFunc("POST /api/v1/pipelines/{id}/publish", s.handlePublishPipeline)
 	protected.HandleFunc("GET /api/v1/pipelines/{id}/versions", s.handleListPipelineVersions)
+	protected.HandleFunc("POST /api/v1/pipelines/{id}/versions/{versionId}/restore", s.handleRestorePipelineVersion)
 	protected.HandleFunc("POST /api/v1/pipelines/{id}/runs", s.handleRunPipeline)
+	protected.HandleFunc("POST /api/v1/pipeline-versions/{id}/runs", s.handleRunPipelineVersion)
 	protected.HandleFunc("GET /api/v1/pipeline-versions/{id}", s.handleGetPipelineVersion)
 	protected.HandleFunc("/api/v1/pipeline-versions/{id}", methodNotAllowed(http.MethodGet))
 	protected.HandleFunc("GET /api/v1/pipeline-runs", s.handleListPipelineRuns)
 	protected.HandleFunc("/api/v1/pipeline-runs", methodNotAllowed(http.MethodGet))
 	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}", s.handleGetPipelineRun)
+	protected.HandleFunc("POST /api/v1/pipeline-runs/{id}/cancel", s.handleCancelPipelineRun)
+	protected.HandleFunc("POST /api/v1/pipeline-runs/{id}/rerun", s.handleRerunPipelineRun)
 	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}/events", s.handlePipelineRunEvents)
 	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}/log", s.handlePipelineRunLog)
 	protected.HandleFunc("/api/v1/pipeline-runs/{id}", methodNotAllowed(http.MethodGet))

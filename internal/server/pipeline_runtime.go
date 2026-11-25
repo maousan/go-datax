@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -182,11 +183,8 @@ func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun) {
 		return
 	}
 	defer logFile.Close()
-	writer := bufio.NewWriter(logFile)
-	writeLog := func(format string, args ...any) {
-		_, _ = fmt.Fprintf(writer, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
-		_ = writer.Flush()
-	}
+	logWriter := newPipelineLogWriter(logFile, s.runtimeSettings().MaxLogBytes)
+	writeLog := logWriter.writeLog
 
 	writeLog("pipeline run #%d started (worker run %s)", run.ID, workerRunID)
 	gotDone := false
@@ -213,4 +211,57 @@ func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun) {
 		writeLog("runner error: %v", waitErr)
 	}
 	stream.finish(run.ID)
+	s.prunePipelineRuns()
+}
+
+// prunePipelineRuns applies runtime retention settings to PipelineRun rows and logs.
+func (s *Server) prunePipelineRuns() {
+	settings := s.runtimeSettings()
+	runs, err := s.dataStore.ListPipelineRunsForPrune(settings.MaxRuns, settings.MaxAgeDays)
+	if err != nil {
+		return
+	}
+	for _, run := range runs {
+		if err := s.dataStore.DeletePipelineRun(run.ID); err != nil {
+			continue
+		}
+		if run.LogPath != "" {
+			_ = os.Remove(run.LogPath)
+		}
+	}
+}
+
+// pipelineLogWriter writes timestamped run logs while enforcing maxLogBytes.
+type pipelineLogWriter struct {
+	writer    *bufio.Writer
+	limit     int64
+	written   int64
+	truncated bool
+}
+
+func newPipelineLogWriter(writer io.Writer, limit int64) *pipelineLogWriter {
+	return &pipelineLogWriter{writer: bufio.NewWriter(writer), limit: limit}
+}
+
+func (w *pipelineLogWriter) writeLog(format string, args ...any) {
+	if w.truncated {
+		return
+	}
+	line := fmt.Sprintf("[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+	if w.limit > 0 && w.written+int64(len(line)) > w.limit {
+		marker := "[log truncated]\n"
+		remaining := w.limit - w.written
+		if remaining > 0 {
+			if int64(len(marker)) > remaining {
+				marker = marker[:remaining]
+			}
+			_, _ = w.writer.WriteString(marker)
+		}
+		w.truncated = true
+		_ = w.writer.Flush()
+		return
+	}
+	_, _ = w.writer.WriteString(line)
+	w.written += int64(len(line))
+	_ = w.writer.Flush()
 }

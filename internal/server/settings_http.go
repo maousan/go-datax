@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/longkeyy/go-datax/internal/execution"
 )
@@ -11,6 +13,38 @@ import (
 const runtimeSettingKey = "runtime"
 
 const megabyte = int64(1024 * 1024)
+
+func (s *Server) savedRuntimeSettings() (execution.RuntimeSettings, bool) {
+	raw, found, err := s.dataStore.GetSetting(runtimeSettingKey)
+	if err != nil || !found || strings.TrimSpace(raw) == "" {
+		return execution.RuntimeSettings{}, false
+	}
+	var settings execution.RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		log.Printf("忽略无法解析的运行参数设置: %v", err)
+		return execution.RuntimeSettings{}, false
+	}
+	if err := validateRuntimeSettings(settings); err != nil {
+		log.Printf("忽略无效的运行参数设置: %v", err)
+		return execution.RuntimeSettings{}, false
+	}
+	return settings, true
+}
+
+func (s *Server) runtimeSettings() execution.RuntimeSettings {
+	if s.executor != nil {
+		return s.executor.Runtime()
+	}
+	if saved, ok := s.savedRuntimeSettings(); ok {
+		return saved
+	}
+	return execution.RuntimeSettings{
+		MaxConcurrent: s.config.Runtime.MaxConcurrent,
+		MaxRuns:       s.config.Retention.MaxRuns,
+		MaxAgeDays:    s.config.Retention.MaxAgeDays,
+		MaxLogBytes:   s.config.Retention.MaxLogBytes,
+	}
+}
 
 func (s *Server) handleGetRuntimeSettings(w http.ResponseWriter, r *http.Request) {
 	if s.executor != nil {
@@ -48,10 +82,9 @@ func (s *Server) handleUpdateRuntimeSettings(w http.ResponseWriter, r *http.Requ
 
 	if s.executor != nil {
 		s.executor.UpdateRuntime(settings)
-		writeJSON(w, http.StatusOK, s.executor.Runtime())
-		return
 	}
-	writeJSON(w, http.StatusOK, settings)
+	s.prunePipelineRuns()
+	writeJSON(w, http.StatusOK, s.runtimeSettings())
 }
 
 func validateRuntimeSettings(settings execution.RuntimeSettings) error {

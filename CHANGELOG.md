@@ -63,6 +63,12 @@ All notable changes to this project will be documented in this file.
   - 新增 ETL「Pipelines」列表、详情（概览/草稿/版本/调度占位/运行）与运行详情页，支持发布、运行、查看版本快照与实时日志
   - 本票不做 Transform 步骤（#22）与调度（#24）；草稿/版本模型已为后续票保留位置
   - worker 协议版本提升到 2；发布/运行会拒绝 schema 不一致或尚未发布的 Pipeline
+- **Pipeline 版本运行与运行控制**:
+  - 版本列表支持运行指定版本，以及用历史版本重建草稿（保留版本中的源/目标快照，发布时直接使用快照定义）
+  - 运行中 PipelineRun 可取消；失败运行可全量重跑并生成新的 `rerun` 运行记录
+  - 新增 ETL「运行记录」页，按 Pipeline、状态筛选并分页查看
+  - Pipeline 日志按运行时设置 `maxLogBytes` 截断；运行记录与日志按 `maxRuns`/`maxAgeDays` 清理
+  - `POST /api/v1/pipeline-versions/{id}/runs`、`POST /api/v1/pipelines/{id}/versions/{versionId}/restore`、`POST /api/v1/pipeline-runs/{id}/cancel|rerun`
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -189,6 +190,100 @@ func TestPipelineValidation(t *testing.T) {
 	}
 }
 
+func TestPipelineRunRetention(t *testing.T) {
+	dataStore := openTestStore(t)
+	srv, _ := newTestServerWithStore(t, map[string]string{"index.html": "<html>app</html>"}, testAuthConfig(t), dataStore)
+	if err := dataStore.SaveSetting(runtimeSettingKey,
+		`{"maxConcurrent":2,"maxRuns":1,"maxAgeDays":30,"maxLogBytes":1048576}`); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	var logs []string
+	for index := 0; index < 3; index++ {
+		path := filepath.Join(logDir, fmt.Sprintf("run-%d.log", index))
+		if err := os.WriteFile(path, []byte("log"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		logs = append(logs, path)
+		run := &store.PipelineRun{
+			PipelineName: "retention",
+			Status:       store.PipelineRunStatusSucceeded,
+			Trigger:      store.PipelineRunTriggerManual,
+			StartedAt:    time.Now(),
+			LogPath:      path,
+		}
+		if err := dataStore.CreatePipelineRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.prunePipelineRuns()
+	runs, total, err := dataStore.ListPipelineRuns(store.PipelineRunFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(runs) != 1 {
+		t.Fatalf("retained runs = %+v total = %d", runs, total)
+	}
+	for _, path := range logs[:2] {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed", path)
+		}
+	}
+	if _, err := os.Stat(logs[2]); err != nil {
+		t.Fatalf("newest log missing: %v", err)
+	}
+}
+
+func TestPipelineRunCancel(t *testing.T) {
+	_, handler, dataStore := newPipelineTestServer(t)
+	token := loginToken(t, handler, "admin", "secret")
+	base := t.TempDir()
+	var builder strings.Builder
+	builder.WriteString("id,name\n")
+	for index := 0; index < 200000; index++ {
+		fmt.Fprintf(&builder, "%d,row\n", index+1)
+	}
+	if err := os.WriteFile(filepath.Join(base, "source.csv"), []byte(builder.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sinkPath := filepath.Join(t.TempDir(), "sink.db")
+	createPipelineTestTarget(t, sinkPath)
+	sourceID, sinkID := seedPipelineSourceAndSink(t, dataStore, base, "source.csv", sinkPath)
+
+	rec := authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines", token, map[string]any{
+		"name":     "cancel-pipeline",
+		"sourceId": sourceID,
+		"sinkId":   sinkID,
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var pipeline pipelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &pipeline); err != nil {
+		t.Fatal(err)
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/"+itoa(pipeline.ID)+"/publish", token, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("publish status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/"+itoa(pipeline.ID)+"/runs", token, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("run status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var run pipelineRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipeline-runs/"+itoa(run.ID)+"/cancel", token, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("cancel status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	run = waitPipelineRun(t, handler, token, run.ID)
+	if run.Status != store.PipelineRunStatusCanceled {
+		t.Fatalf("canceled run = %+v", run)
+	}
+}
+
 func TestPipelineRunFailureRecorded(t *testing.T) {
 	_, handler, dataStore := newPipelineTestServer(t)
 	token := loginToken(t, handler, "admin", "secret")
@@ -239,6 +334,22 @@ func TestPipelineRunFailureRecorded(t *testing.T) {
 	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/pipeline-runs/"+itoa(run.ID)+"/log", token, nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "done status=failed") {
 		t.Fatalf("failure log status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipeline-runs/"+itoa(run.ID)+"/rerun", token, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var retried pipelineRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.ID == run.ID || retried.Trigger != store.PipelineRunTriggerRerun {
+		t.Fatalf("retried run = %+v", retried)
+	}
+	retried = waitPipelineRun(t, handler, token, retried.ID)
+	if retried.Status != store.PipelineRunStatusFailed {
+		t.Fatalf("rerun result = %+v", retried)
 	}
 }
 
@@ -345,6 +456,7 @@ func TestPipelinePublishRunAndDraftIsolation(t *testing.T) {
 		PipelineName: pipeline.Name,
 		Status:       store.PipelineRunStatusRunning,
 		Trigger:      store.PipelineRunTriggerManual,
+		StartedAt:    time.Now(),
 	}
 	if err := dataStore.CreatePipelineRun(activeRun); err != nil {
 		t.Fatal(err)
@@ -458,5 +570,73 @@ func TestPipelinePublishRunAndDraftIsolation(t *testing.T) {
 	}
 	if runs.Total != 3 || len(runs.Items) != 3 {
 		t.Fatalf("runs = %+v", runs)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipeline-versions/"+itoa(version.ID)+"/runs", token, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("run version status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var versionRun pipelineRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &versionRun); err != nil {
+		t.Fatal(err)
+	}
+	if versionRun.VersionNumber != 1 {
+		t.Fatalf("version run = %+v", versionRun)
+	}
+	versionRun = waitPipelineRun(t, handler, token, versionRun.ID)
+	if versionRun.Status != store.PipelineRunStatusSucceeded || versionRun.WriteRecords != 2 {
+		t.Fatalf("version run result = %+v", versionRun)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPost,
+		"/api/v1/pipelines/"+itoa(pipeline.ID)+"/versions/"+itoa(version.ID)+"/restore", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore draft status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var restored pipelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Source == nil || restored.Source.Name != "pipeline-csv" || restored.SourceID != sourceID {
+		t.Fatalf("restored draft = %+v", restored)
+	}
+
+	// Restore must preserve the frozen endpoint definition even if the live
+	// Source endpoint changes afterwards.
+	sourceEndpoint, err := dataStore.GetEndpoint(store.EndpointKindSource, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEndpoint.Path = "changed.csv"
+	if err := dataStore.UpdateEndpoint(&sourceEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	rec = authedJSONRequest(t, handler, http.MethodPost, "/api/v1/pipelines/"+itoa(pipeline.ID)+"/publish", token, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("restore publish status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var restoredVersion pipelineVersionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &restoredVersion); err != nil {
+		t.Fatal(err)
+	}
+	if restoredVersion.Source.Path != "source.csv" || len(restoredVersion.Source.Schema) != 2 {
+		t.Fatalf("restored version used the edited endpoint: %+v", restoredVersion.Source)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodPut, "/api/v1/pipelines/"+itoa(pipeline.ID), token, map[string]any{
+		"name":        pipeline.Name,
+		"description": pipeline.Description,
+		"sourceId":    source2.ID,
+		"sinkId":      sinkID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update after restore status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var changed pipelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &changed); err != nil {
+		t.Fatal(err)
+	}
+	if changed.DraftVersionNumber != 0 || changed.Source == nil || changed.Source.Name != "pipeline-csv-2" {
+		t.Fatalf("draft snapshot was not cleared: %+v", changed)
 	}
 }

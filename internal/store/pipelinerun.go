@@ -20,6 +20,7 @@ const (
 const (
 	PipelineRunTriggerDiagnostic = "diagnostic"
 	PipelineRunTriggerManual     = "manual"
+	PipelineRunTriggerRerun      = "rerun"
 )
 
 // ErrPipelineRunNotFound 表示 PipelineRun 不存在。
@@ -148,4 +149,49 @@ func (s *Store) MarkRunningPipelineRunsFailed(summary string) (int64, error) {
 		"finished_at":   now,
 	})
 	return result.RowsAffected, result.Error
+}
+
+// ListPipelineRunsForPrune returns runs outside the retention policy.
+func (s *Store) ListPipelineRunsForPrune(maxRuns, maxAgeDays int) ([]PipelineRun, error) {
+	var pruned []PipelineRun
+	if maxAgeDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -maxAgeDays)
+		var expired []PipelineRun
+		if err := s.db.Where("started_at < ? AND status <> ?", cutoff, PipelineRunStatusRunning).
+			Find(&expired).Error; err != nil {
+			return nil, err
+		}
+		pruned = append(pruned, expired...)
+	}
+	if maxRuns > 0 {
+		var ids []int64
+		if err := s.db.Model(&PipelineRun{}).
+			Where("status <> ?", PipelineRunStatusRunning).
+			Order("id desc").
+			Pluck("id", &ids).Error; err != nil {
+			return nil, err
+		}
+		if len(ids) > maxRuns {
+			var overflow []PipelineRun
+			if err := s.db.Where("id IN ?", ids[maxRuns:]).Find(&overflow).Error; err != nil {
+				return nil, err
+			}
+			pruned = append(pruned, overflow...)
+		}
+	}
+	seen := map[int64]bool{}
+	result := make([]PipelineRun, 0, len(pruned))
+	for _, run := range pruned {
+		if seen[run.ID] {
+			continue
+		}
+		seen[run.ID] = true
+		result = append(result, run)
+	}
+	return result, nil
+}
+
+// DeletePipelineRun removes a run record.
+func (s *Store) DeletePipelineRun(id int64) error {
+	return s.db.Delete(&PipelineRun{}, id).Error
 }

@@ -43,6 +43,11 @@ func RunPipeline(ctx context.Context, spec PipelineSpec, emit func(Event)) (RunS
 		safeEmit(Event{Type: "log", Message: fmt.Sprintf(format, args...)})
 	}
 	fail := func(err error) (RunStatus, error) {
+		if ctx.Err() != nil {
+			logf("已取消")
+			safeEmit(Event{Type: "done", Status: StatusCanceled, Error: ctx.Err().Error()})
+			return StatusCanceled, ctx.Err()
+		}
 		logf("运行失败：%v", err)
 		safeEmit(Event{Type: "done", Status: StatusFailed, Error: err.Error()})
 		return StatusFailed, err

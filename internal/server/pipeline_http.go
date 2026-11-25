@@ -46,17 +46,18 @@ type pipelineVersionSummary struct {
 }
 
 type pipelineResponse struct {
-	ID            int64                    `json:"id"`
-	Name          string                   `json:"name"`
-	Description   string                   `json:"description"`
-	SourceID      int64                    `json:"sourceId"`
-	SinkID        int64                    `json:"sinkId"`
-	Source        *pipelineEndpointSummary `json:"source"`
-	Sink          *pipelineEndpointSummary `json:"sink"`
-	LatestVersion *pipelineVersionSummary  `json:"latestVersion"`
-	LastRun       *pipelineRunResponse     `json:"lastRun"`
-	CreatedAt     string                   `json:"createdAt"`
-	UpdatedAt     string                   `json:"updatedAt"`
+	ID                 int64                    `json:"id"`
+	Name               string                   `json:"name"`
+	Description        string                   `json:"description"`
+	SourceID           int64                    `json:"sourceId"`
+	SinkID             int64                    `json:"sinkId"`
+	Source             *pipelineEndpointSummary `json:"source"`
+	Sink               *pipelineEndpointSummary `json:"sink"`
+	DraftVersionNumber int                      `json:"draftVersionNumber"`
+	LatestVersion      *pipelineVersionSummary  `json:"latestVersion"`
+	LastRun            *pipelineRunResponse     `json:"lastRun"`
+	CreatedAt          string                   `json:"createdAt"`
+	UpdatedAt          string                   `json:"updatedAt"`
 }
 
 type pipelineEndpointSnapshot struct {
@@ -170,6 +171,24 @@ func toPipelineEndpointSummary(endpoint store.Endpoint, dataSourceName string) (
 	}, nil
 }
 
+func toPipelineEndpointSummaryFromSnapshot(snapshot pipelineEndpointSnapshot, dataSourceName string) pipelineEndpointSummary {
+	options := map[string]string{}
+	for key, value := range snapshot.Options {
+		options[key] = value
+	}
+	return pipelineEndpointSummary{
+		ID:             snapshot.EndpointID,
+		Name:           snapshot.Name,
+		Connector:      snapshot.Connector,
+		DataSourceName: dataSourceName,
+		Table:          snapshot.Table,
+		Query:          snapshot.Query,
+		Path:           snapshot.Path,
+		Schema:         snapshot.Schema,
+		Options:        options,
+	}
+}
+
 func toPipelineVersionSummary(version store.PipelineVersion) pipelineVersionSummary {
 	return pipelineVersionSummary{
 		ID:            version.ID,
@@ -206,28 +225,40 @@ func pipelineResponseFrom(
 	pipeline store.Pipeline,
 	source, sink store.Endpoint,
 	sourceDSName, sinkDSName string,
+	sourceSnapshot, sinkSnapshot *pipelineEndpointSnapshot,
 	latest *store.PipelineVersion,
 	last *store.PipelineRun,
 ) (pipelineResponse, error) {
 	response := pipelineResponse{
-		ID:          pipeline.ID,
-		Name:        pipeline.Name,
-		Description: pipeline.Description,
-		SourceID:    pipeline.SourceID,
-		SinkID:      pipeline.SinkID,
-		CreatedAt:   pipeline.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:   pipeline.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                 pipeline.ID,
+		Name:               pipeline.Name,
+		Description:        pipeline.Description,
+		SourceID:           pipeline.SourceID,
+		SinkID:             pipeline.SinkID,
+		DraftVersionNumber: pipeline.DraftVersionNumber,
+		CreatedAt:          pipeline.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:          pipeline.UpdatedAt.UTC().Format(time.RFC3339),
 	}
-	sourceSummary, err := toPipelineEndpointSummary(source, sourceDSName)
-	if err != nil {
-		return response, err
+	if sourceSnapshot != nil {
+		summary := toPipelineEndpointSummaryFromSnapshot(*sourceSnapshot, sourceDSName)
+		response.Source = &summary
+	} else {
+		sourceSummary, err := toPipelineEndpointSummary(source, sourceDSName)
+		if err != nil {
+			return response, err
+		}
+		response.Source = &sourceSummary
 	}
-	sinkSummary, err := toPipelineEndpointSummary(sink, sinkDSName)
-	if err != nil {
-		return response, err
+	if sinkSnapshot != nil {
+		summary := toPipelineEndpointSummaryFromSnapshot(*sinkSnapshot, sinkDSName)
+		response.Sink = &summary
+	} else {
+		sinkSummary, err := toPipelineEndpointSummary(sink, sinkDSName)
+		if err != nil {
+			return response, err
+		}
+		response.Sink = &sinkSummary
 	}
-	response.Source = &sourceSummary
-	response.Sink = &sinkSummary
 	if latest != nil {
 		summary := toPipelineVersionSummary(*latest)
 		response.LatestVersion = &summary
@@ -237,6 +268,20 @@ func pipelineResponseFrom(
 		response.LastRun = &run
 	}
 	return response, nil
+}
+
+func pipelineDraftSnapshots(pipeline store.Pipeline) (*pipelineEndpointSnapshot, *pipelineEndpointSnapshot, error) {
+	if strings.TrimSpace(pipeline.DraftSourceJSON) == "" || strings.TrimSpace(pipeline.DraftSinkJSON) == "" {
+		return nil, nil, nil
+	}
+	var source, sink pipelineEndpointSnapshot
+	if err := json.Unmarshal([]byte(pipeline.DraftSourceJSON), &source); err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal([]byte(pipeline.DraftSinkJSON), &sink); err != nil {
+		return nil, nil, err
+	}
+	return &source, &sink, nil
 }
 
 func (s *Server) loadPipelineResponse(pipeline store.Pipeline) (pipelineResponse, error) {
@@ -255,6 +300,18 @@ func (s *Server) loadPipelineResponse(pipeline store.Pipeline) (pipelineResponse
 	sinkDS, err := s.dataStore.GetDataSource(sink.DataSourceID)
 	if err != nil {
 		return pipelineResponse{}, err
+	}
+	sourceSnapshot, sinkSnapshot, err := pipelineDraftSnapshots(pipeline)
+	if err != nil {
+		return pipelineResponse{}, err
+	}
+	sourceDSName := sourceDS.Name
+	if sourceSnapshot != nil {
+		sourceDSName = sourceSnapshot.DataSourceName
+	}
+	sinkDSName := sinkDS.Name
+	if sinkSnapshot != nil {
+		sinkDSName = sinkSnapshot.DataSourceName
 	}
 	var latest *store.PipelineVersion
 	version, err := s.dataStore.LatestPipelineVersion(pipeline.ID)
@@ -275,10 +332,11 @@ func (s *Server) loadPipelineResponse(pipeline store.Pipeline) (pipelineResponse
 	if len(runs) > 0 {
 		last = &runs[0]
 	}
-	return pipelineResponseFrom(pipeline, source, sink, sourceDS.Name, sinkDS.Name, latest, last)
+	return pipelineResponseFrom(pipeline, source, sink, sourceDSName, sinkDSName, sourceSnapshot, sinkSnapshot, latest, last)
 }
 
 func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
+	s.prunePipelineRuns()
 	pipelines, err := s.dataStore.ListPipelines(r.URL.Query().Get("query"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
@@ -358,7 +416,21 @@ func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
 		if run, ok := runByPipeline[pipeline.ID]; ok {
 			last = &run
 		}
-		item, err := pipelineResponseFrom(pipeline, source, sink, sourceDS.Name, sinkDS.Name, latest, last)
+		var sourceSnapshot, sinkSnapshot *pipelineEndpointSnapshot
+		sourceSnapshot, sinkSnapshot, err = pipelineDraftSnapshots(pipeline)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
+			return
+		}
+		sourceDSName := sourceDS.Name
+		if sourceSnapshot != nil {
+			sourceDSName = sourceSnapshot.DataSourceName
+		}
+		sinkDSName := sinkDS.Name
+		if sinkSnapshot != nil {
+			sinkDSName = sinkSnapshot.DataSourceName
+		}
+		item, err := pipelineResponseFrom(pipeline, source, sink, sourceDSName, sinkDSName, sourceSnapshot, sinkSnapshot, latest, last)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
 			return
@@ -369,6 +441,7 @@ func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetPipeline(w http.ResponseWriter, r *http.Request) {
+	s.prunePipelineRuns()
 	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -457,6 +530,12 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	}
 	pipeline.Name = normalized.Name
 	pipeline.Description = normalized.Description
+	if pipeline.SourceID != normalized.SourceID || pipeline.SinkID != normalized.SinkID {
+		pipeline.DraftSourceJSON = ""
+		pipeline.DraftSinkJSON = ""
+		pipeline.DraftVersionID = nil
+		pipeline.DraftVersionNumber = 0
+	}
 	pipeline.SourceID = normalized.SourceID
 	pipeline.SinkID = normalized.SinkID
 	if err := s.dataStore.UpdatePipeline(&pipeline); err != nil {
@@ -520,25 +599,44 @@ func (s *Server) handlePublishPipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "目标不存在")
 		return
 	}
-	sourceDS, err := s.dataStore.GetDataSource(source.DataSourceID)
+	sourceSnapshot, sinkSnapshot, err := pipelineDraftSnapshots(pipeline)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取草稿快照失败")
+		return
+	}
+	sourceDataSourceID := source.DataSourceID
+	if sourceSnapshot != nil {
+		sourceDataSourceID = sourceSnapshot.DataSourceID
+	}
+	sinkDataSourceID := sink.DataSourceID
+	if sinkSnapshot != nil {
+		sinkDataSourceID = sinkSnapshot.DataSourceID
+	}
+	sourceDS, err := s.dataStore.GetDataSource(sourceDataSourceID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "源的数据源不存在")
 		return
 	}
-	sinkDS, err := s.dataStore.GetDataSource(sink.DataSourceID)
+	sinkDS, err := s.dataStore.GetDataSource(sinkDataSourceID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "目标的数据源不存在")
 		return
 	}
-	sourceSnapshot, err := buildPipelineSnapshot(source, sourceDS)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_pipeline", err.Error())
-		return
+	if sourceSnapshot == nil {
+		snapshot, err := buildPipelineSnapshot(source, sourceDS)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_pipeline", err.Error())
+			return
+		}
+		sourceSnapshot = &snapshot
 	}
-	sinkSnapshot, err := buildPipelineSnapshot(sink, sinkDS)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_pipeline", err.Error())
-		return
+	if sinkSnapshot == nil {
+		snapshot, err := buildPipelineSnapshot(sink, sinkDS)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_pipeline", err.Error())
+			return
+		}
+		sinkSnapshot = &snapshot
 	}
 	if !connector.SchemasEqual(sourceSnapshot.Schema, sinkSnapshot.Schema) {
 		writeError(w, http.StatusUnprocessableEntity, "schema_mismatch", "源与目标的字段不一致")
@@ -562,15 +660,23 @@ func (s *Server) handlePublishPipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "序列化版本失败")
 		return
 	}
+	sourceEndpointID := sourceSnapshot.EndpointID
+	if sourceEndpointID == 0 {
+		sourceEndpointID = source.ID
+	}
+	sinkEndpointID := sinkSnapshot.EndpointID
+	if sinkEndpointID == 0 {
+		sinkEndpointID = sink.ID
+	}
 	version := &store.PipelineVersion{
 		PipelineID:         pipeline.ID,
-		SourceEndpointID:   source.ID,
-		SinkEndpointID:     sink.ID,
+		SourceEndpointID:   sourceEndpointID,
+		SinkEndpointID:     sinkEndpointID,
 		SourceDataSourceID: sourceDS.ID,
 		SinkDataSourceID:   sinkDS.ID,
-		SourceName:         source.Name,
-		SinkName:           sink.Name,
-		Summary:            source.Name + " → " + sink.Name,
+		SourceName:         sourceSnapshot.Name,
+		SinkName:           sinkSnapshot.Name,
+		Summary:            sourceSnapshot.Name + " → " + sinkSnapshot.Name,
 		SourceJSON:         string(sourceJSON),
 		SinkJSON:           string(sinkJSON),
 	}
@@ -663,14 +769,210 @@ func (s *Server) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本失败")
 		return
 	}
+	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerManual)
+}
+
+func (s *Server) handleRunPipelineVersion(w http.ResponseWriter, r *http.Request) {
+	versionID, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	version, err := s.dataStore.GetPipelineVersion(versionID)
+	if errors.Is(err, store.ErrPipelineVersionNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "版本不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本失败")
+		return
+	}
+	pipeline, err := s.dataStore.GetPipeline(version.PipelineID)
+	if errors.Is(err, store.ErrPipelineNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Pipeline 不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
+		return
+	}
+	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerManual)
+}
+
+func (s *Server) handleRestorePipelineVersion(w http.ResponseWriter, r *http.Request) {
+	pipelineID, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	versionID, err := pathID(r, "versionId")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	pipeline, err := s.dataStore.GetPipeline(pipelineID)
+	if errors.Is(err, store.ErrPipelineNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Pipeline 不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
+		return
+	}
+	version, err := s.dataStore.GetPipelineVersion(versionID)
+	if errors.Is(err, store.ErrPipelineVersionNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "版本不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本失败")
+		return
+	}
+	if version.PipelineID != pipeline.ID {
+		writeError(w, http.StatusBadRequest, "invalid_request", "版本不属于该 Pipeline")
+		return
+	}
+	var source, sink pipelineEndpointSnapshot
+	if err := json.Unmarshal([]byte(version.SourceJSON), &source); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本快照失败")
+		return
+	}
+	if err := json.Unmarshal([]byte(version.SinkJSON), &sink); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本快照失败")
+		return
+	}
+	sourceID := version.SourceEndpointID
+	if sourceID == 0 {
+		sourceID = source.EndpointID
+	}
+	sinkID := version.SinkEndpointID
+	if sinkID == 0 {
+		sinkID = sink.EndpointID
+	}
+	if _, err := s.dataStore.GetEndpoint(store.EndpointKindSource, sourceID); err != nil {
+		writeError(w, http.StatusConflict, "endpoint_missing", "版本引用的源已不存在")
+		return
+	}
+	if _, err := s.dataStore.GetEndpoint(store.EndpointKindSink, sinkID); err != nil {
+		writeError(w, http.StatusConflict, "endpoint_missing", "版本引用的目标已不存在")
+		return
+	}
+	pipeline.SourceID = sourceID
+	pipeline.SinkID = sinkID
+	pipeline.DraftSourceJSON = version.SourceJSON
+	pipeline.DraftSinkJSON = version.SinkJSON
+	pipeline.DraftVersionID = &version.ID
+	pipeline.DraftVersionNumber = version.VersionNumber
+	if err := s.dataStore.UpdatePipeline(&pipeline); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "更新草稿失败")
+		return
+	}
+	response, err := s.loadPipelineResponse(pipeline)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleCancelPipelineRun(w http.ResponseWriter, r *http.Request) {
+	runID, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	run, err := s.dataStore.GetPipelineRun(runID)
+	if errors.Is(err, store.ErrPipelineRunNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "运行记录不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
+		return
+	}
+	if run.Status != store.PipelineRunStatusRunning {
+		writeJSON(w, http.StatusOK, toPipelineRunResponse(run))
+		return
+	}
+	if run.PipelineID == nil {
+		writeError(w, http.StatusConflict, "run_not_pipeline", "只有 Pipeline 运行可以取消")
+		return
+	}
 	if s.worker == nil {
 		writeError(w, http.StatusServiceUnavailable, "worker_unavailable", "etl-worker 未启用")
 		return
 	}
-	runLock := s.pipelineRunLock(id)
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = s.worker.CancelPipelineRun(cancelCtx, run.ID)
+	cancel()
+	if errors.Is(err, errPipelineRunNotActive) {
+		writeError(w, http.StatusConflict, "run_not_active", "该运行已不在执行中")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "取消运行失败："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "canceling"})
+}
+
+func (s *Server) handleRerunPipelineRun(w http.ResponseWriter, r *http.Request) {
+	runID, err := pathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	previous, err := s.dataStore.GetPipelineRun(runID)
+	if errors.Is(err, store.ErrPipelineRunNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "运行记录不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
+		return
+	}
+	if previous.Status != store.PipelineRunStatusFailed {
+		writeError(w, http.StatusConflict, "run_not_failed", "只有失败的运行可以重跑")
+		return
+	}
+	if previous.PipelineID == nil || previous.VersionID == nil {
+		writeError(w, http.StatusConflict, "run_not_replayable", "该运行缺少 Pipeline 或版本信息")
+		return
+	}
+	pipeline, err := s.dataStore.GetPipeline(*previous.PipelineID)
+	if errors.Is(err, store.ErrPipelineNotFound) {
+		writeError(w, http.StatusConflict, "pipeline_deleted", "原 Pipeline 已删除")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
+		return
+	}
+	version, err := s.dataStore.GetPipelineVersion(*previous.VersionID)
+	if errors.Is(err, store.ErrPipelineVersionNotFound) {
+		writeError(w, http.StatusConflict, "version_deleted", "原版本已不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本失败")
+		return
+	}
+	if version.PipelineID != pipeline.ID {
+		writeError(w, http.StatusConflict, "version_mismatch", "原版本不属于该 Pipeline")
+		return
+	}
+	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerRerun)
+}
+
+func (s *Server) startPipelineRun(w http.ResponseWriter, pipeline store.Pipeline, version store.PipelineVersion, trigger string) {
+	if s.worker == nil {
+		writeError(w, http.StatusServiceUnavailable, "worker_unavailable", "etl-worker 未启用")
+		return
+	}
+	runLock := s.pipelineRunLock(pipeline.ID)
 	runLock.Lock()
 	defer runLock.Unlock()
-	active, err := s.dataStore.HasActivePipelineRun(id)
+	active, err := s.dataStore.HasActivePipelineRun(pipeline.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "检查运行状态失败")
 		return
@@ -719,7 +1021,7 @@ func (s *Server) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 		VersionNumber: version.VersionNumber,
 		PipelineName:  pipeline.Name,
 		Status:        store.PipelineRunStatusRunning,
-		Trigger:       store.PipelineRunTriggerManual,
+		Trigger:       trigger,
 		StartedAt:     time.Now(),
 	}
 	if err := s.dataStore.CreatePipelineRun(run); err != nil {
