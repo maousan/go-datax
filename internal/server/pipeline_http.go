@@ -1061,6 +1061,7 @@ func (s *Server) handleCancelPipelineRun(w http.ResponseWriter, r *http.Request)
 		}
 		if canceled {
 			run.Status = store.PipelineRunStatusCanceled
+			s.notifyPipelineRun(run.ID, false)
 			if run.PipelineID != nil {
 				go s.drainPipelineQueue(*run.PipelineID)
 			}

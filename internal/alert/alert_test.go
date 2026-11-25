@@ -310,7 +310,8 @@ func TestNotifyDispatchesAndLogs(t *testing.T) {
 	if entry.Status != store.AlertStatusSuccess {
 		t.Errorf("log status = %q, want success", entry.Status)
 	}
-	if entry.Event != notify.EventFailed || entry.ChannelName != "ops-webhook" || entry.ChannelType != TypeWebhook {
+	if entry.SourceKind != store.AlertSourceDataX ||
+		entry.Event != notify.EventFailed || entry.ChannelName != "ops-webhook" || entry.ChannelType != TypeWebhook {
 		t.Errorf("log = %+v", entry)
 	}
 	if entry.RunID != 42 || entry.SyncJobName != "nightly-sync" || entry.SyncJobID == nil || *entry.SyncJobID != 7 {
@@ -656,5 +657,103 @@ func TestLegacyChannelType(t *testing.T) {
 		if got := legacyChannelType(input); got != want {
 			t.Errorf("legacyChannelType(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func samplePipelineRun() store.PipelineRun {
+	pipelineID := int64(11)
+	versionID := int64(22)
+	scheduleID := int64(33)
+	started := time.Date(2026, 11, 24, 10, 0, 0, 0, time.Local)
+	finished := started.Add(90 * time.Second)
+	return store.PipelineRun{
+		ID:            44,
+		PipelineID:    &pipelineID,
+		VersionID:     &versionID,
+		ScheduleID:    &scheduleID,
+		VersionNumber: 3,
+		PipelineName:  "orders-etl",
+		Status:        store.PipelineRunStatusFailed,
+		Trigger:       store.PipelineRunTriggerSchedule,
+		StartedAt:     started,
+		FinishedAt:    &finished,
+		ReadRecords:   100,
+		WriteRecords:  98,
+		ErrorSummary:  "boom\nat line 1",
+	}
+}
+
+func TestNotifyPipelineDispatchesAndLogs(t *testing.T) {
+	dataStore := openTestStore(t)
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(body)
+		requests <- string(body)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	manager := New(dataStore)
+	if err := manager.Update(Config{
+		Enabled: true, TimeoutSeconds: 5, RetentionDays: 90,
+		Channels: []Channel{webhookChannel(server.URL)},
+	}); err != nil {
+		t.Fatalf("Update() failed: %v", err)
+	}
+	manager.NotifyPipeline(samplePipelineRun(), false)
+
+	select {
+	case body := <-requests:
+		for _, want := range []string{
+			`"sourceKind":"pipeline"`, `"event":"failed"`, `"pipelineId":11`,
+			`"pipelineName":"orders-etl"`, `"versionNumber":3`, `"runId":44`,
+			`"scheduleId":33`, `"trigger":"schedule"`,
+			`"readRecords":100`, `"writeRecords":98`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("payload = %s, missing %s", body, want)
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook did not receive a Pipeline alert")
+	}
+
+	entry := waitForLog(t, dataStore)
+	if entry.SourceKind != store.AlertSourcePipeline || entry.Event != notify.EventFailed ||
+		entry.PipelineID == nil || *entry.PipelineID != 11 ||
+		entry.PipelineRunID == nil || *entry.PipelineRunID != 44 ||
+		entry.PipelineName != "orders-etl" || entry.VersionNumber != 3 {
+		t.Fatalf("Pipeline alert log = %+v", entry)
+	}
+	if entry.RunID != 0 || entry.SyncJobName != "" {
+		t.Errorf("Pipeline log leaked DataX fields: %+v", entry)
+	}
+}
+
+func TestNotifyPipelineSkipsPendingRetry(t *testing.T) {
+	dataStore := openTestStore(t)
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.URL.String()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	manager := New(dataStore)
+	if err := manager.Update(Config{
+		Enabled: true, TimeoutSeconds: 5, RetentionDays: 90,
+		Channels: []Channel{webhookChannel(server.URL)},
+	}); err != nil {
+		t.Fatalf("Update() failed: %v", err)
+	}
+	manager.NotifyPipeline(samplePipelineRun(), true)
+	select {
+	case target := <-requests:
+		t.Fatalf("unexpected alert request: %s", target)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, total, err := dataStore.ListAlertLogs(store.AlertLogFilter{}); err != nil || total != 0 {
+		t.Fatalf("logs = %d, err = %v", total, err)
 	}
 }

@@ -109,3 +109,44 @@ func TestAlertLogCreateListAndDelete(t *testing.T) {
 }
 
 func ptrTime(value time.Time) *time.Time { return &value }
+
+func TestAlertLogSourceFilterAndPipelineFields(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "alert-source.db"))
+	pipelineID := int64(11)
+	pipelineRunID := int64(22)
+	entries := []AlertLog{
+		{SourceKind: AlertSourceDataX, Event: "failed", Status: AlertStatusSuccess, SyncJobName: "datax-job", ChannelName: "ops"},
+		{SourceKind: "", Event: "failed", Status: AlertStatusSuccess, SyncJobName: "legacy-job", ChannelName: "ops"},
+		{
+			SourceKind: AlertSourcePipeline, Event: "failed", Status: AlertStatusSuccess,
+			ChannelName: "ops", PipelineID: &pipelineID, PipelineName: "etl-job",
+			PipelineRunID: &pipelineRunID, VersionNumber: 3,
+		},
+	}
+	for i := range entries {
+		if err := s.CreateAlertLog(&entries[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Simulate a row created before source_kind existed.
+	if err := s.db.Exec("UPDATE alert_logs SET source_kind = '' WHERE sync_job_name = 'legacy-job'").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	logs, total, err := s.ListAlertLogs(AlertLogFilter{SourceKind: AlertSourceDataX})
+	if err != nil || total != 2 || len(logs) != 2 {
+		t.Fatalf("datax logs = %+v, total %d, err %v", logs, total, err)
+	}
+	logs, total, err = s.ListAlertLogs(AlertLogFilter{SourceKind: AlertSourcePipeline})
+	if err != nil || total != 1 || len(logs) != 1 {
+		t.Fatalf("pipeline logs = %+v, total %d, err %v", logs, total, err)
+	}
+	if logs[0].PipelineID == nil || *logs[0].PipelineID != pipelineID ||
+		logs[0].PipelineRunID == nil || *logs[0].PipelineRunID != pipelineRunID ||
+		logs[0].VersionNumber != 3 {
+		t.Fatalf("pipeline fields = %+v", logs[0])
+	}
+	if _, total, err = s.ListAlertLogs(AlertLogFilter{Query: "etl-job"}); err != nil || total != 1 {
+		t.Fatalf("pipeline keyword total = %d, err %v", total, err)
+	}
+}

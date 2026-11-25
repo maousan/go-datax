@@ -553,6 +553,30 @@ func (m *Manager) Notify(run store.JobRun, willRetry bool) {
 	}
 }
 
+// NotifyPipeline 在 Pipeline 运行结束时发送告警。
+func (m *Manager) NotifyPipeline(run store.PipelineRun, willRetry bool) {
+	cfg := m.snapshot()
+	if !cfg.Enabled {
+		return
+	}
+	event := notify.PipelineEventFor(run, willRetry)
+	if event == "" {
+		return
+	}
+
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	for _, channel := range cfg.Channels {
+		if !channel.Enabled || !channelHasEvent(channel, event) {
+			continue
+		}
+		go func(channel Channel) {
+			started := time.Now()
+			err := sendPipeline(channel, event, run, timeout)
+			m.recordPipeline(channel, event, run, started, err, cfg.RetentionDays)
+		}(channel)
+	}
+}
+
 func channelHasEvent(channel Channel, event string) bool {
 	for _, candidate := range channel.Events {
 		if candidate == event {
@@ -578,6 +602,7 @@ func (m *Manager) record(
 	}
 
 	entry := store.AlertLog{
+		SourceKind:      store.AlertSourceDataX,
 		Event:           event,
 		Status:          store.AlertStatusSuccess,
 		ChannelID:       channel.ID,
@@ -595,8 +620,55 @@ func (m *Manager) record(
 		entry.Status = store.AlertStatusFailed
 		entry.Error = notify.TruncateRunes(strings.ReplaceAll(sendErr.Error(), "\n", " "), 900)
 	}
-	if err := m.store.CreateAlertLog(&entry); err != nil {
-		log.Printf("写入告警日志失败: %v", err)
+	m.persistAlertLog(&entry, sendErr, retentionDays, "告警")
+}
+
+func (m *Manager) recordPipeline(
+	channel Channel,
+	event string,
+	run store.PipelineRun,
+	started time.Time,
+	sendErr error,
+	retentionDays int,
+) {
+	if sendErr != nil {
+		log.Printf("发送 Pipeline 告警失败（渠道 %s，事件 %s）: %v", channel.Name, event, sendErr)
+	}
+	if m.store == nil {
+		return
+	}
+
+	entry := store.AlertLog{
+		SourceKind:    store.AlertSourcePipeline,
+		Event:         event,
+		Status:        store.AlertStatusSuccess,
+		ChannelID:     channel.ID,
+		ChannelName:   channel.Name,
+		ChannelType:   channel.Type,
+		PipelineID:    run.PipelineID,
+		PipelineName:  run.PipelineName,
+		PipelineRunID: &run.ID,
+		VersionNumber: run.VersionNumber,
+		DurationMS:    time.Since(started).Milliseconds(),
+		CreatedAt:     time.Now(),
+	}
+	if sendErr != nil {
+		entry.Status = store.AlertStatusFailed
+		entry.Error = notify.TruncateRunes(strings.ReplaceAll(sendErr.Error(), "\n", " "), 900)
+	}
+	m.persistAlertLog(&entry, sendErr, retentionDays, "Pipeline 告警")
+}
+
+func (m *Manager) persistAlertLog(entry *store.AlertLog, sendErr error, retentionDays int, label string) {
+	if sendErr != nil {
+		entry.Status = store.AlertStatusFailed
+		entry.Error = notify.TruncateRunes(strings.ReplaceAll(sendErr.Error(), "\n", " "), 900)
+	}
+	if m.store == nil {
+		return
+	}
+	if err := m.store.CreateAlertLog(entry); err != nil {
+		log.Printf("写入%s日志失败: %v", label, err)
 		return
 	}
 	m.prune(retentionDays)

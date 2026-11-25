@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/longkeyy/go-datax/internal/notify"
+	"github.com/longkeyy/go-datax/internal/store"
 )
 
 type alertConfigTestResponse struct {
@@ -289,5 +290,65 @@ func TestAlertConfigMigratesLegacyNotification(t *testing.T) {
 	}
 	if cfg.Channels[0].Type != "feishu" || cfg.Channels[0].URL != "https://example.com/feishu" {
 		t.Errorf("migrated channel = %+v", cfg.Channels[0])
+	}
+}
+
+func TestAlertLogsFilterBySource(t *testing.T) {
+	dataStore := openTestStore(t)
+	_, handler := newTestServerWithStore(t, map[string]string{
+		"index.html": "<html><body>app-shell</body></html>",
+	}, testAuthConfig(t), dataStore)
+	token := loginToken(t, handler, "admin", "secret")
+	pipelineID := int64(11)
+	pipelineRunID := int64(22)
+	entries := []store.AlertLog{
+		{SourceKind: store.AlertSourceDataX, Event: "failed", Status: store.AlertStatusSuccess, SyncJobName: "datax-job"},
+		{SourceKind: "", Event: "failed", Status: store.AlertStatusSuccess, SyncJobName: "legacy-job"},
+		{
+			SourceKind: store.AlertSourcePipeline, Event: "succeeded", Status: store.AlertStatusSuccess,
+			PipelineID: &pipelineID, PipelineName: "orders-etl", PipelineRunID: &pipelineRunID, VersionNumber: 4,
+		},
+	}
+	for i := range entries {
+		if err := dataStore.CreateAlertLog(&entries[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := authedJSONRequest(t, handler, http.MethodGet, "/api/v1/alerts/logs?sourceKind=pipeline", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pipeline logs status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Items []alertLogResponse `json:"items"`
+		Total int64              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Total != 1 || len(payload.Items) != 1 {
+		t.Fatalf("pipeline logs = %+v", payload)
+	}
+	item := payload.Items[0]
+	if item.SourceKind != store.AlertSourcePipeline || item.PipelineID == nil || *item.PipelineID != pipelineID ||
+		item.PipelineRunID == nil || *item.PipelineRunID != pipelineRunID ||
+		item.PipelineName != "orders-etl" || item.VersionNumber != 4 {
+		t.Fatalf("pipeline log item = %+v", item)
+	}
+
+	rec = authedJSONRequest(t, handler, http.MethodGet, "/api/v1/alerts/logs?sourceKind=datax", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("datax logs status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Total != 2 || len(payload.Items) != 2 {
+		t.Fatalf("datax logs including legacy = %+v", payload)
+	}
+	for _, item := range payload.Items {
+		if item.SourceKind != store.AlertSourceDataX {
+			t.Fatalf("legacy source kind = %q", item.SourceKind)
+		}
 	}
 }

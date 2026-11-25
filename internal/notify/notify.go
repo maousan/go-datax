@@ -71,6 +71,7 @@ func EventTitle(event string) string {
 }
 
 type genericPayload struct {
+	SourceKind      string  `json:"sourceKind"`
 	Event           string  `json:"event"`
 	Status          string  `json:"status"`
 	JobID           int64   `json:"jobId"`
@@ -90,6 +91,7 @@ type genericPayload struct {
 // RunPayload 构造通用 Webhook 的结构化运行事件。
 func RunPayload(event string, run store.JobRun) ([]byte, error) {
 	return json.Marshal(genericPayload{
+		SourceKind:      store.AlertSourceDataX,
 		Event:           event,
 		Status:          run.Status,
 		JobID:           jobID(run),
@@ -108,6 +110,95 @@ func RunPayload(event string, run store.JobRun) ([]byte, error) {
 }
 
 // TextPayload 构造 IM 文本消息体。
+// PipelineEventFor returns the alert event for a Pipeline run.
+func PipelineEventFor(run store.PipelineRun, willRetry bool) string {
+	switch run.Status {
+	case store.PipelineRunStatusFailed:
+		if willRetry {
+			return ""
+		}
+		return EventFailed
+	case store.PipelineRunStatusCanceled:
+		return EventCanceled
+	case store.PipelineRunStatusSucceeded:
+		if run.Trigger == store.PipelineRunTriggerRetry {
+			return EventRecovered
+		}
+		return EventSucceeded
+	default:
+		return ""
+	}
+}
+
+type pipelinePayload struct {
+	SourceKind      string  `json:"sourceKind"`
+	Event           string  `json:"event"`
+	Status          string  `json:"status"`
+	PipelineID      int64   `json:"pipelineId"`
+	PipelineName    string  `json:"pipelineName"`
+	VersionID       *int64  `json:"versionId,omitempty"`
+	VersionNumber   int     `json:"versionNumber"`
+	RunID           int64   `json:"runId"`
+	ScheduleID      *int64  `json:"scheduleId,omitempty"`
+	Trigger         string  `json:"trigger"`
+	RetryAttempt    int     `json:"retryAttempt"`
+	StartedAt       string  `json:"startedAt"`
+	FinishedAt      string  `json:"finishedAt,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	ReadRecords     int64   `json:"readRecords"`
+	WriteRecords    int64   `json:"writeRecords"`
+	ErrorSummary    string  `json:"errorSummary,omitempty"`
+}
+
+// PipelineRunPayload builds the structured generic-webhook payload for a Pipeline run.
+func PipelineRunPayload(event string, run store.PipelineRun) ([]byte, error) {
+	return json.Marshal(pipelinePayload{
+		SourceKind:      store.AlertSourcePipeline,
+		Event:           event,
+		Status:          run.Status,
+		PipelineID:      pipelineID(run),
+		PipelineName:    run.PipelineName,
+		VersionID:       run.VersionID,
+		VersionNumber:   run.VersionNumber,
+		RunID:           run.ID,
+		ScheduleID:      run.ScheduleID,
+		Trigger:         run.Trigger,
+		RetryAttempt:    run.RetryAttempt,
+		StartedAt:       run.StartedAt.UTC().Format(time.RFC3339),
+		FinishedAt:      pipelineFinishedAt(run),
+		DurationSeconds: pipelineDurationSeconds(run),
+		ReadRecords:     run.ReadRecords,
+		WriteRecords:    run.WriteRecords,
+		ErrorSummary:    TruncateRunes(strings.ReplaceAll(run.ErrorSummary, "\n", " "), 500),
+	})
+}
+
+// FormatPipelineRunText formats a Pipeline alert for text-based channels.
+func FormatPipelineRunText(event string, run store.PipelineRun) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "【go-datax】%s\n", EventTitle(event))
+	fmt.Fprintf(&b, "Pipeline：%s\n", run.PipelineName)
+	fmt.Fprintf(&b, "版本：v%d\n", run.VersionNumber)
+	trigger := triggerLabel(run.Trigger)
+	if run.RetryAttempt > 0 {
+		trigger = fmt.Sprintf("%s #%d", trigger, run.RetryAttempt)
+	}
+	fmt.Fprintf(&b, "运行：#%d · %s\n", run.ID, trigger)
+	if run.ScheduleID != nil {
+		fmt.Fprintf(&b, "调度：#%d\n", *run.ScheduleID)
+	}
+	fmt.Fprintf(&b, "开始：%s\n", formatLocal(run.StartedAt))
+	if run.FinishedAt != nil {
+		fmt.Fprintf(&b, "结束：%s\n", formatLocal(*run.FinishedAt))
+		fmt.Fprintf(&b, "耗时：%s\n", formatDuration(*run.FinishedAt, run.StartedAt))
+	}
+	fmt.Fprintf(&b, "读取/写入：%d / %d 行\n", run.ReadRecords, run.WriteRecords)
+	if summary := TruncateRunes(strings.ReplaceAll(run.ErrorSummary, "\n", " "), 300); summary != "" {
+		fmt.Fprintf(&b, "错误：%s\n", summary)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func TextPayload(eventType, text string) ([]byte, error) {
 	switch eventType {
 	case TypeFeishu:
@@ -199,17 +290,43 @@ func responseError(body []byte) error {
 	return nil
 }
 
+var triggerLabels = map[string]string{
+	"manual":   "手动触发",
+	"rerun":    "重跑",
+	"retry":    "自动重试",
+	"schedule": "定时调度",
+}
+
 func triggerLabel(trigger string) string {
-	switch trigger {
-	case store.RunTriggerManual:
-		return "手动触发"
-	case store.RunTriggerRerun:
-		return "重跑"
-	case store.RunTriggerRetry:
-		return "自动重试"
-	default:
-		return trigger
+	if label, ok := triggerLabels[trigger]; ok {
+		return label
 	}
+	return trigger
+}
+
+func pipelineID(run store.PipelineRun) int64 {
+	if run.PipelineID == nil {
+		return 0
+	}
+	return *run.PipelineID
+}
+
+func pipelineFinishedAt(run store.PipelineRun) string {
+	if run.FinishedAt == nil {
+		return ""
+	}
+	return run.FinishedAt.UTC().Format(time.RFC3339)
+}
+
+func pipelineDurationSeconds(run store.PipelineRun) float64 {
+	if run.FinishedAt == nil {
+		return 0
+	}
+	seconds := run.FinishedAt.Sub(run.StartedAt).Seconds()
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
 }
 
 func jobID(run store.JobRun) int64 {

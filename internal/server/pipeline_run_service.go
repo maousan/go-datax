@@ -283,15 +283,18 @@ func (s *Server) drainPipelineQueue(pipelineID int64) {
 		pipeline, err := s.dataStore.GetPipeline(pipelineID)
 		if err != nil {
 			_ = s.dataStore.FinishPipelineRun(queued.ID, store.PipelineRunStatusFailed, "排队运行所属 Pipeline 已删除")
+			s.notifyPipelineRun(queued.ID, false)
 			continue
 		}
 		if queued.VersionID == nil {
 			_ = s.dataStore.FinishPipelineRun(queued.ID, store.PipelineRunStatusFailed, "排队运行缺少版本信息")
+			s.notifyPipelineRun(queued.ID, false)
 			continue
 		}
 		version, err := s.dataStore.GetPipelineVersion(*queued.VersionID)
 		if err != nil {
 			_ = s.dataStore.FinishPipelineRun(queued.ID, store.PipelineRunStatusFailed, "排队运行的版本已不存在")
+			s.notifyPipelineRun(queued.ID, false)
 			continue
 		}
 		opts := pipelineStartOptions{
@@ -305,6 +308,7 @@ func (s *Server) drainPipelineQueue(pipelineID int64) {
 			schedule, err := s.dataStore.GetPipelineSchedule(*queued.ScheduleID)
 			if err != nil || !schedule.Enabled {
 				_ = s.dataStore.FinishPipelineRun(queued.ID, store.PipelineRunStatusCanceled, "调度已停用或删除")
+				s.notifyPipelineRun(queued.ID, false)
 				continue
 			}
 		}
@@ -320,6 +324,7 @@ func (s *Server) drainPipelineQueue(pipelineID int64) {
 				}
 			}
 			_ = s.dataStore.FinishPipelineRun(queued.ID, store.PipelineRunStatusFailed, err.Error())
+			s.notifyPipelineRun(queued.ID, false)
 			continue
 		}
 		return
@@ -339,14 +344,15 @@ func (s *Server) resumePipelineQueues() {
 }
 
 // maybeRetryPipelineRun schedules the next retry for a failed scheduled run.
-func (s *Server) maybeRetryPipelineRun(runID int64) {
+// It reports whether a retry was arranged.
+func (s *Server) maybeRetryPipelineRun(runID int64) bool {
 	run, err := s.dataStore.GetPipelineRun(runID)
 	if err != nil || run.Status != store.PipelineRunStatusFailed || run.ScheduleID == nil {
-		return
+		return false
 	}
 	schedule, err := s.dataStore.GetPipelineSchedule(*run.ScheduleID)
 	if err != nil || !schedule.Enabled || run.RetryAttempt >= schedule.RetryMax {
-		return
+		return false
 	}
 	scheduleID := schedule.ID
 	interval := time.Duration(schedule.RetryIntervalSeconds) * time.Second
@@ -378,8 +384,19 @@ func (s *Server) maybeRetryPipelineRun(runID int64) {
 		})
 		if err != nil {
 			log.Printf("Pipeline 运行 #%d 重试失败: %v", run.ID, err)
+			s.notifyPipelineRun(run.ID, false)
 		}
 	}()
+	return true
+}
+
+func (s *Server) notifyPipelineRun(runID int64, willRetry bool) {
+	final, err := s.dataStore.GetPipelineRun(runID)
+	if err != nil {
+		log.Printf("读取 Pipeline 运行 #%d 以发送告警失败: %v", runID, err)
+		return
+	}
+	s.alerts.NotifyPipeline(final, willRetry)
 }
 
 // applyPipelineTimeout cancels a run and marks it timed out when its deadline passes.

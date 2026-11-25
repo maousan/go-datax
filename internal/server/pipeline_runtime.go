@@ -182,6 +182,11 @@ func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun, o
 		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = s.worker.CancelRun(cancelCtx, workerRunID)
 		cancel()
+		willRetry := s.maybeRetryPipelineRun(run.ID)
+		s.notifyPipelineRun(run.ID, willRetry)
+		if run.PipelineID != nil {
+			s.drainPipelineQueue(*run.PipelineID)
+		}
 		return
 	}
 	defer logFile.Close()
@@ -219,7 +224,8 @@ func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun, o
 	}
 	stream.finish(run.ID)
 	s.prunePipelineRuns()
-	s.maybeRetryPipelineRun(run.ID)
+	willRetry := s.maybeRetryPipelineRun(run.ID)
+	s.notifyPipelineRun(run.ID, willRetry)
 	if run.PipelineID != nil {
 		s.drainPipelineQueue(*run.PipelineID)
 	}

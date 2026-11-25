@@ -28,8 +28,9 @@ func send(channel Channel, event string, run store.JobRun, timeout time.Duration
 	case TypeWebhook:
 		if event == notify.EventTest {
 			body, err := json.Marshal(map[string]any{
-				"event":   event,
-				"message": "go-datax 告警测试",
+				"sourceKind": store.AlertSourceDataX,
+				"event":      event,
+				"message":    "go-datax 告警测试",
 			})
 			if err != nil {
 				return err
@@ -41,36 +42,25 @@ func send(channel Channel, event string, run store.JobRun, timeout time.Duration
 			return err
 		}
 		return notify.Post(channel.URL, timeout, body)
-	case TypeDingTalk:
-		target, err := signDingTalkURL(channel.URL, channel.Secret)
-		if err != nil {
-			return err
-		}
-		body, err := notify.TextPayload(notify.TypeDingTalk, eventText(event, run))
-		if err != nil {
-			return err
-		}
-		return notify.Post(target, timeout, body)
-	case TypeFeishu:
-		body, err := feishuPayload(channel.Secret, eventText(event, run))
-		if err != nil {
-			return err
-		}
-		return notify.Post(channel.URL, timeout, body)
-	case TypeWeCom:
-		body, err := notify.TextPayload(notify.TypeWeCom, eventText(event, run))
-		if err != nil {
-			return err
-		}
-		return notify.Post(channel.URL, timeout, body)
-	case TypeSlack:
-		body, err := notify.TextPayload(notify.TypeSlack, eventText(event, run))
+	default:
+		return dispatchIM(channel, eventText(event, run), timeout)
+	}
+}
+
+// sendPipeline dispatches a Pipeline alert through one channel.
+func sendPipeline(channel Channel, event string, run store.PipelineRun, timeout time.Duration) error {
+	text := notify.FormatPipelineRunText(event, run)
+	switch channel.Type {
+	case TypeEmail:
+		return sendEmailText(channel, event, run.PipelineName, text, timeout)
+	case TypeWebhook:
+		body, err := notify.PipelineRunPayload(event, run)
 		if err != nil {
 			return err
 		}
 		return notify.Post(channel.URL, timeout, body)
 	default:
-		return fmt.Errorf("不支持的告警渠道类型: %s", channel.Type)
+		return dispatchIM(channel, text, timeout)
 	}
 }
 
@@ -82,6 +72,42 @@ func eventText(event string, run store.JobRun) string {
 }
 
 // signDingTalkURL 按钉钉机器人要求追加 timestamp/sign 查询参数。
+
+func dispatchIM(channel Channel, text string, timeout time.Duration) error {
+	switch channel.Type {
+	case TypeDingTalk:
+		target, err := signDingTalkURL(channel.URL, channel.Secret)
+		if err != nil {
+			return err
+		}
+		body, err := notify.TextPayload(notify.TypeDingTalk, text)
+		if err != nil {
+			return err
+		}
+		return notify.Post(target, timeout, body)
+	case TypeFeishu:
+		body, err := feishuPayload(channel.Secret, text)
+		if err != nil {
+			return err
+		}
+		return notify.Post(channel.URL, timeout, body)
+	case TypeWeCom:
+		body, err := notify.TextPayload(notify.TypeWeCom, text)
+		if err != nil {
+			return err
+		}
+		return notify.Post(channel.URL, timeout, body)
+	case TypeSlack:
+		body, err := notify.TextPayload(notify.TypeSlack, text)
+		if err != nil {
+			return err
+		}
+		return notify.Post(channel.URL, timeout, body)
+	default:
+		return fmt.Errorf("不支持的告警渠道类型: %s", channel.Type)
+	}
+}
+
 func signDingTalkURL(rawURL, secret string) (string, error) {
 	if secret == "" {
 		return rawURL, nil
@@ -121,6 +147,10 @@ func hmacBase64(key, message []byte) string {
 }
 
 func sendEmail(channel Channel, event string, run store.JobRun, timeout time.Duration) error {
+	return sendEmailText(channel, event, run.SyncJobName, eventText(event, run), timeout)
+}
+
+func sendEmailText(channel Channel, event, subjectName, text string, timeout time.Duration) error {
 	from, err := mail.ParseAddress(channel.From)
 	if err != nil {
 		// 未填写发件人时沿用 SMTP 用户名。
@@ -141,9 +171,9 @@ func sendEmail(channel Channel, event string, run store.JobRun, timeout time.Dur
 
 	subject := "【go-datax】告警测试"
 	if event != notify.EventTest {
-		subject = fmt.Sprintf("【go-datax】%s - %s", notify.EventTitle(event), run.SyncJobName)
+		subject = fmt.Sprintf("【go-datax】%s - %s", notify.EventTitle(event), subjectName)
 	}
-	return smtpSend(channel, from.Address, recipients, subject, eventText(event, run), timeout)
+	return smtpSend(channel, from.Address, recipients, subject, text, timeout)
 }
 
 func smtpSend(

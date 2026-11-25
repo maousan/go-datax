@@ -16,6 +16,7 @@ type alertTestRequest struct {
 
 type alertLogResponse struct {
 	ID              int64  `json:"id"`
+	SourceKind      string `json:"sourceKind"`
 	Event           string `json:"event"`
 	Status          string `json:"status"`
 	ChannelID       string `json:"channelId"`
@@ -26,14 +27,23 @@ type alertLogResponse struct {
 	SyncJobName     string `json:"syncJobName"`
 	CollectTaskID   *int64 `json:"collectTaskId"`
 	CollectTaskName string `json:"collectTaskName"`
+	PipelineID      *int64 `json:"pipelineId"`
+	PipelineName    string `json:"pipelineName"`
+	PipelineRunID   *int64 `json:"pipelineRunId"`
+	VersionNumber   int    `json:"versionNumber"`
 	Error           string `json:"error"`
 	DurationMS      int64  `json:"durationMs"`
 	CreatedAt       string `json:"createdAt"`
 }
 
 func toAlertLogResponse(entry store.AlertLog) alertLogResponse {
+	sourceKind := entry.SourceKind
+	if sourceKind == "" {
+		sourceKind = store.AlertSourceDataX
+	}
 	return alertLogResponse{
 		ID:              entry.ID,
+		SourceKind:      sourceKind,
 		Event:           entry.Event,
 		Status:          entry.Status,
 		ChannelID:       entry.ChannelID,
@@ -44,6 +54,10 @@ func toAlertLogResponse(entry store.AlertLog) alertLogResponse {
 		SyncJobName:     entry.SyncJobName,
 		CollectTaskID:   entry.CollectTaskID,
 		CollectTaskName: entry.CollectTaskName,
+		PipelineID:      entry.PipelineID,
+		PipelineName:    entry.PipelineName,
+		PipelineRunID:   entry.PipelineRunID,
+		VersionNumber:   entry.VersionNumber,
 		Error:           entry.Error,
 		DurationMS:      entry.DurationMS,
 		CreatedAt:       entry.CreatedAt.UTC().Format(time.RFC3339),
@@ -82,7 +96,12 @@ func (s *Server) handleTestAlertChannel(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleListAlertLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	sourceKind := query.Get("sourceKind")
+	if sourceKind != store.AlertSourceDataX && sourceKind != store.AlertSourcePipeline {
+		sourceKind = ""
+	}
 	filter := store.AlertLogFilter{
+		SourceKind:  sourceKind,
 		Event:       query.Get("event"),
 		Status:      query.Get("status"),
 		ChannelType: query.Get("channelType"),
