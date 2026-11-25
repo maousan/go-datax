@@ -5,7 +5,7 @@ Go 实现的 DataX 兼容离线数据同步引擎，以及承载 DataX 区与 Pi
 ## Language
 
 **DataSource**:
-一组可复用的数据源连接定义（类型、地址、凭据），可被多个 Pipeline 或 SyncDataXJob 引用。
+一组可复用的数据源连接定义：类型 + connector 专用配置（地址、凭据、文件根路径、端点等），可被多个 Pipeline 或 SyncDataXJob 引用；JDBC URL 只是 JDBC connector 的可选字段。
 _Avoid_: 连接、Connection、数据源配置（指代实体时）
 
 **Dataset（数据集）**:
