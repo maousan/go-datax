@@ -18,6 +18,7 @@ type pipelineRunResponse struct {
 	ID            int64   `json:"id"`
 	PipelineID    *int64  `json:"pipelineId"`
 	VersionID     *int64  `json:"versionId"`
+	ScheduleID    *int64  `json:"scheduleId"`
 	VersionNumber int     `json:"versionNumber"`
 	PipelineName  string  `json:"pipelineName"`
 	Status        string  `json:"status"`
@@ -28,6 +29,7 @@ type pipelineRunResponse struct {
 	WriteRecords  int64   `json:"writeRecords"`
 	ReadBytes     int64   `json:"readBytes"`
 	ErrorSummary  string  `json:"errorSummary"`
+	RetryAttempt  int     `json:"retryAttempt"`
 	CreatedAt     string  `json:"createdAt"`
 }
 
@@ -36,6 +38,7 @@ func toPipelineRunResponse(run store.PipelineRun) pipelineRunResponse {
 		ID:            run.ID,
 		PipelineID:    run.PipelineID,
 		VersionID:     run.VersionID,
+		ScheduleID:    run.ScheduleID,
 		VersionNumber: run.VersionNumber,
 		PipelineName:  run.PipelineName,
 		Status:        run.Status,
@@ -45,6 +48,7 @@ func toPipelineRunResponse(run store.PipelineRun) pipelineRunResponse {
 		WriteRecords:  run.WriteRecords,
 		ReadBytes:     run.ReadBytes,
 		ErrorSummary:  run.ErrorSummary,
+		RetryAttempt:  run.RetryAttempt,
 		CreatedAt:     run.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if run.FinishedAt != nil {

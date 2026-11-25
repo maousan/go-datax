@@ -66,7 +66,7 @@ func (req collectTaskRequest) normalized() (collectTaskRequest, error) {
 		return req, fmt.Errorf("cron 表达式不正确: %v", err)
 	}
 	if schedule.Next(time.Now()).IsZero() {
-		return req, fmt.Errorf("cron 表达式在未来 8 年内没有可执行时间")
+		return req, fmt.Errorf("cron 表达式在未来 %d 年内没有可执行时间", quartzcron.MaxLookaheadYears)
 	}
 
 	req.BlockingPolicy = strings.ToLower(strings.TrimSpace(req.BlockingPolicy))

@@ -19,22 +19,23 @@ const bearerPrefix = "Bearer "
 
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
-	config           Config
-	configPath       string
-	version          string
-	assets           fs.FS
-	authMu           sync.RWMutex
-	tokens           *TokenService
-	dataStore        *store.Store
-	executor         *execution.Manager
-	alerts           *alert.Manager
-	scheduler        *collectScheduler
-	worker           *workerSupervisor
-	pipelineStreams  *pipelineStreamHub
-	pipelineRunLocks sync.Map
-	monitor          *monitor.Sampler
-	dataxVersion     string
-	handler          http.Handler
+	config            Config
+	configPath        string
+	version           string
+	assets            fs.FS
+	authMu            sync.RWMutex
+	tokens            *TokenService
+	dataStore         *store.Store
+	executor          *execution.Manager
+	alerts            *alert.Manager
+	scheduler         *collectScheduler
+	pipelineScheduler *pipelineScheduler
+	worker            *workerSupervisor
+	pipelineStreams   *pipelineStreamHub
+	pipelineRunLocks  sync.Map
+	monitor           *monitor.Sampler
+	dataxVersion      string
+	handler           http.Handler
 }
 
 // New 创建一个管理台服务。assets 是前端构建产物的根文件系统（index.html 位于根）。
@@ -69,6 +70,7 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 		}
 	}
 	s.scheduler = newCollectScheduler(s)
+	s.pipelineScheduler = newPipelineScheduler(s)
 	s.worker = newWorkerSupervisor(cfg.Worker, dataStore)
 	s.monitor = monitor.New(monitor.DefaultInterval, monitor.DefaultRetention)
 	s.monitor.Start()
@@ -79,17 +81,23 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 	return s, nil
 }
 
-// StartScheduler 启动采集任务调度循环。
+// StartScheduler 启动采集任务与 Pipeline 调度循环。
 func (s *Server) StartScheduler() {
 	if s.scheduler != nil {
 		s.scheduler.Start()
 	}
+	if s.pipelineScheduler != nil {
+		s.pipelineScheduler.Start()
+	}
 }
 
-// StopScheduler 停止采集任务调度循环。
+// StopScheduler 停止采集任务与 Pipeline 调度循环。
 func (s *Server) StopScheduler() {
 	if s.scheduler != nil {
 		s.scheduler.Stop()
+	}
+	if s.pipelineScheduler != nil {
+		s.pipelineScheduler.Stop()
 	}
 }
 
@@ -98,7 +106,11 @@ func (s *Server) StartWorker() error {
 	if s.worker == nil {
 		return nil
 	}
-	return s.worker.Start()
+	if err := s.worker.Start(); err != nil {
+		return err
+	}
+	s.resumePipelineQueues()
+	return nil
 }
 
 // StopWorker 停止 etl-worker 监管循环。
@@ -169,6 +181,14 @@ func (s *Server) routes() http.Handler {
 	protected.HandleFunc("POST /api/v1/pipeline-versions/{id}/runs", s.handleRunPipelineVersion)
 	protected.HandleFunc("GET /api/v1/pipeline-versions/{id}", s.handleGetPipelineVersion)
 	protected.HandleFunc("/api/v1/pipeline-versions/{id}", methodNotAllowed(http.MethodGet))
+	protected.HandleFunc("GET /api/v1/pipeline-schedules", s.handleListPipelineSchedules)
+	protected.HandleFunc("POST /api/v1/pipelines/{id}/schedules", s.handleCreatePipelineSchedule)
+	protected.HandleFunc("GET /api/v1/pipeline-schedules/{id}", s.handleGetPipelineSchedule)
+	protected.HandleFunc("PUT /api/v1/pipeline-schedules/{id}", s.handleUpdatePipelineSchedule)
+	protected.HandleFunc("DELETE /api/v1/pipeline-schedules/{id}", s.handleDeletePipelineSchedule)
+	protected.HandleFunc("/api/v1/pipeline-schedules", methodNotAllowed(http.MethodGet))
+	protected.HandleFunc("/api/v1/pipeline-schedules/{id}", methodNotAllowed("GET, PUT, DELETE"))
+
 	protected.HandleFunc("GET /api/v1/pipeline-runs", s.handleListPipelineRuns)
 	protected.HandleFunc("/api/v1/pipeline-runs", methodNotAllowed(http.MethodGet))
 	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}", s.handleGetPipelineRun)

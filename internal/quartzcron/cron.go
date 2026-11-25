@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// MaxLookaheadYears bounds how far Next searches for an occurrence.
+const MaxLookaheadYears = 8
+
 var monthNames = map[string]int{
 	"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
 	"JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
@@ -217,7 +220,7 @@ func (s *Schedule) Next(after time.Time) time.Time {
 	start := after.Truncate(time.Second).Add(time.Second)
 	location := start.Location()
 	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, location)
-	limit := start.AddDate(8, 0, 0)
+	limit := start.AddDate(MaxLookaheadYears, 0, 0)
 
 	for day.Before(limit) {
 		if s.matchesDate(day) {

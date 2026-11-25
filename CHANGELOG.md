@@ -83,6 +83,14 @@ All notable changes to this project will be documented in this file.
   - Source 支持表或查询，按 int64 `splitPk` 拆 4 片并行读取；Sink 支持 `insert`、`truncate`、`upsert`，upsert 要求表有主键：MySQL 用 `ON DUPLICATE KEY UPDATE`（任意唯一键冲突都会更新），PostgreSQL 用 `ON CONFLICT (主键) DO UPDATE`
   - 新增 env-gated conformance suite：`ETL_MYSQL_JDBC_URL`/`ETL_POSTGRES_JDBC_URL` 等存在时验证读写、类型映射、NULL、insert/truncate/upsert；未配置时 skip
   - 「源与目标」连接器选项新增 MySQL/PostgreSQL；MySQL/PostgreSQL Sink 可选择 upsert
+- **Pipeline 调度与运行准入**:
+  - 一个 Pipeline 可配置多个 Schedule：Quartz cron、IANA 时区、启停、retry、timeout、阻塞策略；默认执行最新发布版本，可 pin 指定版本
+  - 阻塞策略 `discard`/`overwrite`/`queue`：丢弃本次、取消当前运行后启动、或排队等待当前运行结束；同一 Pipeline 默认不并发
+  - 新增 `queued` 运行状态与手动排队：`POST /api/v1/pipelines/{id}/runs?blocking=queue`；排队运行持久化，服务/worker 重启后恢复
+  - 调度失败按 retry 策略创建 `retry` 运行；超时自动取消并把运行标记为失败，错误摘要包含超时时间
+  - 新增 `/api/v1/pipeline-schedules`、`POST /api/v1/pipelines/{id}/schedules` CRUD；调度变更自动重载内存调度器
+  - 新增 ETL「调度」页面与 Pipeline 详情「调度」tab，支持新增/编辑/启停/删除；Pipeline 详情新增「排队运行」
+  - 服务停机期间错过的 cron 触发不补跑，恢复后从下一次计划时间继续
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

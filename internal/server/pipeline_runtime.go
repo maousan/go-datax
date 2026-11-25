@@ -166,7 +166,9 @@ func (s *pipelineStream) close() {
 }
 
 // executePipelineRun consumes worker events, persists logs, and fans out live events.
-func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun) {
+func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun, opts pipelineStartOptions) {
+	stopTimeout, timedOut := s.applyPipelineTimeout(workerRunID, run.ID, opts.Timeout)
+	defer stopTimeout()
 	stream := s.pipelineStreams
 	logFile, err := os.OpenFile(run.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -210,8 +212,17 @@ func (s *Server) executePipelineRun(workerRunID string, run store.PipelineRun) {
 		})
 		writeLog("runner error: %v", waitErr)
 	}
+	if timedOut.Load() {
+		summary := fmt.Sprintf("运行超时（%s）", opts.Timeout)
+		_ = s.dataStore.FinishPipelineRun(run.ID, store.PipelineRunStatusFailed, summary)
+		writeLog("timeout: %s", summary)
+	}
 	stream.finish(run.ID)
 	s.prunePipelineRuns()
+	s.maybeRetryPipelineRun(run.ID)
+	if run.PipelineID != nil {
+		s.drainPipelineQueue(*run.PipelineID)
+	}
 }
 
 // prunePipelineRuns applies runtime retention settings to PipelineRun rows and logs.

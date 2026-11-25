@@ -60,7 +60,9 @@ func TestOverviewAggregation(t *testing.T) {
 	job1 := createOverviewJob(t, dataStore, "job-one")
 	job2 := createOverviewJob(t, dataStore, "job-two")
 
-	now := time.Now()
+	// Keep the fixture away from the local midnight boundary so the 24-hour
+	// window and daily buckets stay stable even when the test crosses midnight.
+	now := time.Now().Add(-2 * time.Hour)
 	seedOverviewRun(t, dataStore, job1, store.RunStatusSucceeded, now, &store.RunProgress{ReadRecords: 100, ReadBytes: 1000})
 	seedOverviewRun(t, dataStore, job1, store.RunStatusFailed, now.Add(-time.Minute), &store.RunProgress{ReadRecords: 30, ReadBytes: 300})
 	seedOverviewRun(t, dataStore, job2, store.RunStatusFailed, now.Add(-2*time.Minute), nil)

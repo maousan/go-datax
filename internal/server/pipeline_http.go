@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -933,7 +931,7 @@ func (s *Server) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本失败")
 		return
 	}
-	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerManual)
+	s.startPipelineRunHTTP(w, pipeline, version, store.PipelineRunTriggerManual, r.URL.Query().Get("blocking"))
 }
 
 func (s *Server) handleRunPipelineVersion(w http.ResponseWriter, r *http.Request) {
@@ -960,7 +958,7 @@ func (s *Server) handleRunPipelineVersion(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取 Pipeline 失败")
 		return
 	}
-	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerManual)
+	s.startPipelineRunHTTP(w, pipeline, version, store.PipelineRunTriggerManual, r.URL.Query().Get("blocking"))
 }
 
 func (s *Server) handleRestorePipelineVersion(w http.ResponseWriter, r *http.Request) {
@@ -1055,6 +1053,26 @@ func (s *Server) handleCancelPipelineRun(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
 		return
 	}
+	if run.Status == store.PipelineRunStatusQueued {
+		canceled, err := s.dataStore.CancelQueuedPipelineRun(run.ID, "已取消排队")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "取消排队失败")
+			return
+		}
+		if canceled {
+			run.Status = store.PipelineRunStatusCanceled
+			if run.PipelineID != nil {
+				go s.drainPipelineQueue(*run.PipelineID)
+			}
+			writeJSON(w, http.StatusOK, toPipelineRunResponse(run))
+			return
+		}
+		run, err = s.dataStore.GetPipelineRun(run.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
+			return
+		}
+	}
 	if run.Status != store.PipelineRunStatusRunning {
 		writeJSON(w, http.StatusOK, toPipelineRunResponse(run))
 		return
@@ -1126,114 +1144,28 @@ func (s *Server) handleRerunPipelineRun(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "version_mismatch", "原版本不属于该 Pipeline")
 		return
 	}
-	s.startPipelineRun(w, pipeline, version, store.PipelineRunTriggerRerun)
+	s.startPipelineRunHTTP(w, pipeline, version, store.PipelineRunTriggerRerun, r.URL.Query().Get("blocking"))
 }
 
-func (s *Server) startPipelineRun(w http.ResponseWriter, pipeline store.Pipeline, version store.PipelineVersion, trigger string) {
-	if s.worker == nil {
-		writeError(w, http.StatusServiceUnavailable, "worker_unavailable", "etl-worker 未启用")
+func (s *Server) startPipelineRunHTTP(w http.ResponseWriter, pipeline store.Pipeline, version store.PipelineVersion, trigger, blocking string) {
+	if blocking != "" && blocking != store.BlockingQueue {
+		writeError(w, http.StatusBadRequest, "invalid_blocking", "手动运行仅支持 queue 阻塞策略")
 		return
 	}
-	runLock := s.pipelineRunLock(pipeline.ID)
-	runLock.Lock()
-	defer runLock.Unlock()
-	active, err := s.dataStore.HasActivePipelineRun(pipeline.ID)
+	run, err := s.startPipelineRun(pipeline, version, pipelineStartOptions{
+		Trigger:  trigger,
+		Blocking: blocking,
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "检查运行状态失败")
+		var startErr *pipelineStartError
+		if errors.As(err, &startErr) {
+			writeError(w, startErr.Status, startErr.Code, startErr.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "启动运行失败")
 		return
 	}
-	if active {
-		writeError(w, http.StatusConflict, "pipeline_running", "该 Pipeline 已有运行中的实例")
-		return
-	}
-	var source, sink pipelineEndpointSnapshot
-	if err := json.Unmarshal([]byte(version.SourceJSON), &source); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本快照失败")
-		return
-	}
-	if err := json.Unmarshal([]byte(version.SinkJSON), &sink); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本快照失败")
-		return
-	}
-	sourceDS, err := s.dataStore.GetDataSource(source.DataSourceID)
-	if errors.Is(err, store.ErrDataSourceNotFound) {
-		writeError(w, http.StatusConflict, "data_source_missing", "版本引用的源数据源已删除")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取源数据源失败")
-		return
-	}
-	sinkDS, err := s.dataStore.GetDataSource(sink.DataSourceID)
-	if errors.Is(err, store.ErrDataSourceNotFound) {
-		writeError(w, http.StatusConflict, "data_source_missing", "版本引用的目标数据源已删除")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取目标数据源失败")
-		return
-	}
-	transforms, err := decodeTransforms(version.TransformsJSON)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "读取版本 Transform 失败")
-		return
-	}
-	spec := worker.RunSpec{Pipeline: &worker.PipelineSpec{
-		Source:                  source.workerEndpoint(sourceDS),
-		Transforms:              transforms,
-		TransformLibraryVersion: version.TransformLibraryVersion,
-		Sink:                    sink.workerEndpoint(sinkDS),
-	}}
-
-	pipelineID := pipeline.ID
-	versionID := version.ID
-	run := &store.PipelineRun{
-		PipelineID:    &pipelineID,
-		VersionID:     &versionID,
-		VersionNumber: version.VersionNumber,
-		PipelineName:  pipeline.Name,
-		Status:        store.PipelineRunStatusRunning,
-		Trigger:       trigger,
-		StartedAt:     time.Now(),
-	}
-	if err := s.dataStore.CreatePipelineRun(run); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "创建运行记录失败")
-		return
-	}
-	logDir := s.config.LogsDir()
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		_ = s.dataStore.FinishPipelineRun(run.ID, store.PipelineRunStatusFailed, err.Error())
-		writeError(w, http.StatusInternalServerError, "internal_error", "创建日志目录失败")
-		return
-	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("pipeline-run-%d.log", run.ID))
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		_ = s.dataStore.FinishPipelineRun(run.ID, store.PipelineRunStatusFailed, err.Error())
-		writeError(w, http.StatusInternalServerError, "internal_error", "创建日志文件失败")
-		return
-	}
-	_ = logFile.Close()
-	run.LogPath = logPath
-	if err := s.dataStore.UpdatePipelineRunLogPath(run.ID, logPath); err != nil {
-		_ = s.dataStore.FinishPipelineRun(run.ID, store.PipelineRunStatusFailed, err.Error())
-		writeError(w, http.StatusInternalServerError, "internal_error", "保存日志路径失败")
-		return
-	}
-
-	s.pipelineStreams.start(run.ID)
-	startCtx, cancelStart := context.WithTimeout(context.Background(), 10*time.Second)
-	workerRunID, err := s.worker.StartTrackedRun(startCtx, spec, run.ID)
-	cancelStart()
-	if err != nil {
-		s.pipelineStreams.finish(run.ID)
-		_ = s.dataStore.FinishPipelineRun(run.ID, store.PipelineRunStatusFailed, err.Error())
-		writeError(w, http.StatusServiceUnavailable, "worker_unavailable", "启动 etl-worker 失败："+err.Error())
-		return
-	}
-	go s.executePipelineRun(workerRunID, *run)
-	response := toPipelineRunResponse(*run)
-	writeJSON(w, http.StatusAccepted, response)
+	writeJSON(w, http.StatusAccepted, toPipelineRunResponse(run))
 }
 
 func parsePipelineRunFilter(r *http.Request) store.PipelineRunFilter {
