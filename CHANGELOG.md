@@ -54,6 +54,15 @@ All notable changes to this project will be documented in this file.
   - SQLite 按数值主键并行分片读取；文件连接器支持表头、分隔符、空值标记与相对根目录路径校验
   - 写入支持 insert 与 truncate；schema 不匹配、值转换失败和写入错误均 fail-fast，错误带行号
   - 新增 ETL 菜单「源与目标」页面（源/目标 tab），可创建、编辑、删除并一键发现字段；DataSource 删除与类型变更会检查 ETL 引用
+- **Pipeline 草稿、不可变版本与手动运行**:
+  - 新增 `/api/v1/pipelines` 草稿 CRUD、`POST /publish` 发布不可变版本；发布时快照 Source/Sink 定义与 schema，运行 spec 在 server 端解析最新 DataSource 连接，后续草稿修改不影响已发布版本
+  - 发布校验源/目标字段一致与 connector 配置；Source/Sink 被草稿引用时禁止删除
+  - `etl-worker` 新增真实 Pipeline 执行：CSV/SQLite 等 connector 按 split 并行读取并写入 Sink，首错取消其余分片，回传读写行数
+  - 手动运行最新版本写入 `pipeline_runs`（Pipeline/Version/trigger/status/计数/日志路径）；同一 Pipeline 已有运行中实例时拒绝重复启动
+  - 新增 `/api/v1/pipeline-runs` 历史/详情、SSE 实时事件与日志下载；运行日志写入数据目录 `logs/pipeline-run-<id>.log`
+  - 新增 ETL「Pipelines」列表、详情（概览/草稿/版本/调度占位/运行）与运行详情页，支持发布、运行、查看版本快照与实时日志
+  - 本票不做 Transform 步骤（#22）与调度（#24）；草稿/版本模型已为后续票保留位置
+  - worker 协议版本提升到 2；发布/运行会拒绝 schema 不一致或尚未发布的 Pipeline
 - **告警管理与告警日志**:
   - 新增「告警管理」菜单，包含「告警配置」「告警日志」页面
   - 渠道类型：邮箱（SMTP，支持 SSL/TLS 与 STARTTLS）、钉钉、飞书、企业微信、Slack、通用 Webhook

@@ -87,6 +87,7 @@ func (s Schema) Index(name string) int {
 type Batch struct {
 	Schema Schema
 	Rows   [][]any
+	Bytes  int64
 }
 
 // Validate checks the schema and every row width.

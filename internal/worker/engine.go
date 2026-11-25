@@ -13,8 +13,12 @@ type BatchSink interface {
 	SendBatch(ctx context.Context, batch Batch) error
 }
 
-// normalizeRunSpec fills defaults and validates a diagnostic run.
+// normalizeRunSpec fills defaults and validates a diagnostic or pipeline run.
 func normalizeRunSpec(spec RunSpec) (RunSpec, error) {
+	if spec.Pipeline != nil {
+		_, err := normalizePipelineSpec(*spec.Pipeline)
+		return spec, err
+	}
 	if spec.Rows <= 0 {
 		return spec, fmt.Errorf("rows must be positive")
 	}
@@ -160,11 +164,12 @@ func RunDiagnostic(ctx context.Context, spec RunSpec, sink BatchSink, emit func(
 			})
 		}
 		event := Event{
-			Type:        "done",
-			Status:      status,
-			ReadRecords: readRecords.Load(),
-			ReadBytes:   readBytes.Load(),
-			Tasks:       tasks,
+			Type:         "done",
+			Status:       status,
+			ReadRecords:  readRecords.Load(),
+			WriteRecords: readRecords.Load(),
+			ReadBytes:    readBytes.Load(),
+			Tasks:        tasks,
 		}
 		if runErr != nil && status == StatusFailed {
 			event.Error = runErr.Error()

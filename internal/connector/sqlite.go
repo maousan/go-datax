@@ -291,6 +291,7 @@ func (s *sqliteSource) ReadBatch(ctx context.Context, split Split) (Batch, error
 		}
 		cursor.read++
 		batch.Rows = append(batch.Rows, row)
+		batch.Bytes += estimateRowBytes(row)
 	}
 	if cursor.exhausted {
 		s.markDone(split.ID)

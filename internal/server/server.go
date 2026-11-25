@@ -20,20 +20,22 @@ const bearerPrefix = "Bearer "
 
 // Server 组合管理台的全部 HTTP 路由。
 type Server struct {
-	config       Config
-	configPath   string
-	version      string
-	assets       fs.FS
-	authMu       sync.RWMutex
-	tokens       *TokenService
-	dataStore    *store.Store
-	executor     *execution.Manager
-	alerts       *alert.Manager
-	scheduler    *collectScheduler
-	worker       *workerSupervisor
-	monitor      *monitor.Sampler
-	dataxVersion string
-	handler      http.Handler
+	config           Config
+	configPath       string
+	version          string
+	assets           fs.FS
+	authMu           sync.RWMutex
+	tokens           *TokenService
+	dataStore        *store.Store
+	executor         *execution.Manager
+	alerts           *alert.Manager
+	scheduler        *collectScheduler
+	worker           *workerSupervisor
+	pipelineStreams  *pipelineStreamHub
+	pipelineRunLocks sync.Map
+	monitor          *monitor.Sampler
+	dataxVersion     string
+	handler          http.Handler
 }
 
 // New 创建一个管理台服务。assets 是前端构建产物的根文件系统（index.html 位于根）。
@@ -51,13 +53,14 @@ func New(cfg Config, version string, assets fs.FS, dataStore *store.Store, execu
 	}
 
 	s := &Server{
-		config:     cfg,
-		configPath: cfg.path,
-		version:    version,
-		assets:     assets,
-		tokens:     tokens,
-		dataStore:  dataStore,
-		alerts:     alert.New(dataStore),
+		config:          cfg,
+		configPath:      cfg.path,
+		version:         version,
+		assets:          assets,
+		tokens:          tokens,
+		dataStore:       dataStore,
+		alerts:          alert.New(dataStore),
+		pipelineStreams: newPipelineStreamHub(),
 	}
 	for _, executor := range executors {
 		if executor != nil {
@@ -163,6 +166,24 @@ func (s *Server) routes() http.Handler {
 	s.registerEndpointRoutes(protected, store.EndpointKindSource, "/api/v1/sources")
 	s.registerEndpointRoutes(protected, store.EndpointKindSink, "/api/v1/sinks")
 
+	protected.HandleFunc("GET /api/v1/pipelines", s.handleListPipelines)
+	protected.HandleFunc("POST /api/v1/pipelines", s.handleCreatePipeline)
+	protected.HandleFunc("/api/v1/pipelines", methodNotAllowed("GET, POST"))
+	protected.HandleFunc("GET /api/v1/pipelines/{id}", s.handleGetPipeline)
+	protected.HandleFunc("PUT /api/v1/pipelines/{id}", s.handleUpdatePipeline)
+	protected.HandleFunc("/api/v1/pipelines/{id}", methodNotAllowed("GET, PUT"))
+	protected.HandleFunc("POST /api/v1/pipelines/{id}/publish", s.handlePublishPipeline)
+	protected.HandleFunc("GET /api/v1/pipelines/{id}/versions", s.handleListPipelineVersions)
+	protected.HandleFunc("POST /api/v1/pipelines/{id}/runs", s.handleRunPipeline)
+	protected.HandleFunc("GET /api/v1/pipeline-versions/{id}", s.handleGetPipelineVersion)
+	protected.HandleFunc("/api/v1/pipeline-versions/{id}", methodNotAllowed(http.MethodGet))
+	protected.HandleFunc("GET /api/v1/pipeline-runs", s.handleListPipelineRuns)
+	protected.HandleFunc("/api/v1/pipeline-runs", methodNotAllowed(http.MethodGet))
+	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}", s.handleGetPipelineRun)
+	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}/events", s.handlePipelineRunEvents)
+	protected.HandleFunc("GET /api/v1/pipeline-runs/{id}/log", s.handlePipelineRunLog)
+	protected.HandleFunc("/api/v1/pipeline-runs/{id}", methodNotAllowed(http.MethodGet))
+
 	protected.HandleFunc("GET /api/v1/datax/datasets", s.handleListQueryTemplates)
 	protected.HandleFunc("POST /api/v1/datax/datasets", s.handleCreateQueryTemplate)
 	protected.HandleFunc("/api/v1/datax/datasets", methodNotAllowed("GET, POST"))
@@ -232,6 +253,12 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("/", s.staticHandler())
 
 	return mux
+}
+
+// pipelineRunLock returns the per-pipeline start lock.
+func (s *Server) pipelineRunLock(id int64) *sync.Mutex {
+	value, _ := s.pipelineRunLocks.LoadOrStore(id, &sync.Mutex{})
+	return value.(*sync.Mutex)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

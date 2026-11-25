@@ -143,13 +143,24 @@ func (s *workerSupervisor) watchExternalWorker(client *worker.Client) {
 	}
 }
 
-// StartDiagnosticRun submits a diagnostic run and records a PipelineRun row.
-func (s *workerSupervisor) StartDiagnosticRun(ctx context.Context, spec worker.RunSpec) (string, error) {
+// StartTrackedRun submits a run and associates it with an existing PipelineRun.
+func (s *workerSupervisor) StartTrackedRun(ctx context.Context, spec worker.RunSpec, pipelineRunID int64) (string, error) {
 	client, err := s.currentClient()
 	if err != nil {
 		return "", err
 	}
+	id, err := client.StartRun(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	s.runs[id] = trackedRun{pipelineRunID: pipelineRunID, status: worker.StatusRunning}
+	s.mu.Unlock()
+	return id, nil
+}
 
+// StartDiagnosticRun submits a diagnostic run and records a PipelineRun row.
+func (s *workerSupervisor) StartDiagnosticRun(ctx context.Context, spec worker.RunSpec) (string, error) {
 	var pipelineRunID int64
 	if s.store != nil {
 		record := &store.PipelineRun{
@@ -164,33 +175,36 @@ func (s *workerSupervisor) StartDiagnosticRun(ctx context.Context, spec worker.R
 		pipelineRunID = record.ID
 	}
 
-	id, err := client.StartRun(ctx, spec)
+	id, err := s.StartTrackedRun(ctx, spec, pipelineRunID)
 	if err != nil {
 		if pipelineRunID > 0 {
 			_ = s.store.FinishPipelineRun(pipelineRunID, store.PipelineRunStatusFailed, err.Error())
 		}
 		return "", err
 	}
-
-	s.mu.Lock()
-	s.runs[id] = trackedRun{pipelineRunID: pipelineRunID, status: worker.StatusRunning}
-	s.mu.Unlock()
 	return id, nil
 }
 
 // WaitRun streams a run until it finishes and records its terminal state.
 func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunStatus, error) {
+	status, _, err := s.WaitRunEvents(ctx, id, nil)
+	return status, err
+}
+
+// WaitRunEvents is WaitRun with an event callback for live progress/logs.
+func (s *workerSupervisor) WaitRunEvents(ctx context.Context, id string, onEvent func(worker.Event)) (worker.RunStatus, worker.Event, error) {
 	client, err := s.currentClient()
 	if err != nil {
-		return worker.StatusFailed, err
+		return worker.StatusFailed, worker.Event{}, err
 	}
+	var lastEvent worker.Event
 	events, errs := client.StreamEvents(ctx, id)
 	for {
 		select {
 		case event, ok := <-events:
 			if !ok {
 				if ctx.Err() != nil {
-					return s.RunStatus(id), ctx.Err()
+					return s.RunStatus(id), lastEvent, ctx.Err()
 				}
 				statusCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				state, statusErr := client.Status(statusCtx, id)
@@ -198,17 +212,21 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 				if statusErr == nil {
 					if state.Status.IsActive() {
 						s.finishRun(id, worker.StatusFailed, "worker stream ended before run completion")
-						return worker.StatusFailed, fmt.Errorf("worker stream ended before run completion")
+						return worker.StatusFailed, lastEvent, fmt.Errorf("worker stream ended before run completion")
 					}
 					s.finishRun(id, state.Status, state.Error)
-					return state.Status, nil
+					return state.Status, lastEvent, nil
 				}
 				s.finishRun(id, worker.StatusFailed, statusErr.Error())
-				return worker.StatusFailed, statusErr
+				return worker.StatusFailed, lastEvent, statusErr
+			}
+			lastEvent = event
+			if onEvent != nil {
+				onEvent(event)
 			}
 			if event.Type == "done" {
-				s.finishRun(id, event.Status, event.Error)
-				return event.Status, nil
+				s.finishRunEvent(id, event)
+				return event.Status, event, nil
 			}
 		case streamErr, ok := <-errs:
 			if !ok {
@@ -217,15 +235,24 @@ func (s *workerSupervisor) WaitRun(ctx context.Context, id string) (worker.RunSt
 			}
 			if streamErr != nil {
 				s.finishRun(id, worker.StatusFailed, streamErr.Error())
-				return worker.StatusFailed, streamErr
+				return worker.StatusFailed, lastEvent, streamErr
 			}
 		case <-ctx.Done():
-			return s.RunStatus(id), ctx.Err()
+			return s.RunStatus(id), lastEvent, ctx.Err()
 		}
 	}
 }
 
-// RunStatus returns the last known status of a diagnostic run.
+// CancelRun asks the worker to cancel a run.
+func (s *workerSupervisor) CancelRun(ctx context.Context, id string) error {
+	client, err := s.currentClient()
+	if err != nil {
+		return err
+	}
+	return client.CancelRun(ctx, id)
+}
+
+// RunStatus returns the last known status of a diagnostic or pipeline run.
 func (s *workerSupervisor) RunStatus(id string) worker.RunStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,24 +290,29 @@ func (s *workerSupervisor) currentClient() (*worker.Client, error) {
 }
 
 func (s *workerSupervisor) finishRun(id string, status worker.RunStatus, summary string) {
+	s.finishRunEvent(id, worker.Event{Status: status, Error: summary})
+}
+
+func (s *workerSupervisor) finishRunEvent(id string, event worker.Event) {
 	s.mu.Lock()
 	run, ok := s.runs[id]
 	if !ok {
 		s.mu.Unlock()
 		return
 	}
-	run.status = status
+	run.status = event.Status
 	s.runs[id] = run
 	s.mu.Unlock()
 
 	if run.pipelineRunID == 0 || s.store == nil {
 		return
 	}
-	storeStatus := string(status)
-	if status == worker.StatusQueued {
+	storeStatus := string(event.Status)
+	if event.Status == worker.StatusQueued {
 		storeStatus = store.PipelineRunStatusRunning
 	}
-	if err := s.store.FinishPipelineRun(run.pipelineRunID, storeStatus, summary); err != nil {
+	if err := s.store.FinishPipelineRunDetails(run.pipelineRunID, storeStatus, event.Error,
+		event.ReadRecords, event.WriteRecords, event.ReadBytes); err != nil {
 		log.Printf("更新 PipelineRun #%d 失败: %v", run.pipelineRunID, err)
 	}
 }

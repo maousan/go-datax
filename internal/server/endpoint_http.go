@@ -162,25 +162,29 @@ func normalizeEndpointRequest(req endpointRequest, kind string, requireSchema bo
 }
 
 func endpointConnectorConfig(ds store.DataSource, req endpointRequest, schema connector.Schema) connector.Config {
+	return buildConnectorConfig(ds, req.Connector, schema, req.Options, req.Table, req.Query, req.Path)
+}
+
+func buildConnectorConfig(ds store.DataSource, connectorName string, schema connector.Schema, sourceOptions map[string]string, table, query, path string) connector.Config {
 	properties := map[string]string{}
 	for key, value := range ds.Properties {
 		properties[key] = value
 	}
 	options := map[string]string{}
-	for key, value := range req.Options {
+	for key, value := range sourceOptions {
 		options[key] = value
 	}
-	if req.Table != "" {
-		options["table"] = req.Table
+	if table != "" {
+		options["table"] = table
 	}
-	if req.Query != "" {
-		options["query"] = req.Query
+	if query != "" {
+		options["query"] = query
 	}
-	if req.Path != "" {
-		options["path"] = req.Path
+	if path != "" {
+		options["path"] = path
 	}
 	return connector.Config{
-		Connector:            req.Connector,
+		Connector:            connectorName,
 		DataSourceType:       ds.Type,
 		JDBCUrl:              ds.JDBCUrl,
 		DataSourceProperties: properties,
@@ -374,7 +378,31 @@ func (s *Server) handleDeleteEndpoint(kind string, w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	// Pipeline versions snapshot these definitions, so they do not block deletion.
+	// Pipeline versions snapshot these definitions; only drafts block deletion.
+	pipelines, err := s.dataStore.PipelinesUsingEndpoint(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查 Pipeline 引用失败")
+		return
+	}
+	if len(pipelines) > 0 {
+		names := make([]string, 0, len(pipelines))
+		for _, pipeline := range pipelines {
+			names = append(names, pipeline.Name)
+		}
+		writeError(w, http.StatusConflict, "endpoint_in_use",
+			"该配置被以下 Pipeline 草稿引用："+strings.Join(names, "、"))
+		return
+	}
+	versions, err := s.dataStore.PipelineVersionsUsingEndpoint(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查已发布版本引用失败")
+		return
+	}
+	if len(versions) > 0 {
+		writeError(w, http.StatusConflict, "endpoint_in_use",
+			"该配置被已发布的 Pipeline 版本引用，不能删除")
+		return
+	}
 	if err := s.dataStore.DeleteEndpoint(kind, id); err != nil {
 		if errors.Is(err, store.ErrEndpointNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", endpointNotFoundMessage(kind))

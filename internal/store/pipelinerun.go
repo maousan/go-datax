@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,27 +19,39 @@ const (
 // PipelineRun 触发来源。
 const (
 	PipelineRunTriggerDiagnostic = "diagnostic"
+	PipelineRunTriggerManual     = "manual"
 )
 
 // ErrPipelineRunNotFound 表示 PipelineRun 不存在。
 var ErrPipelineRunNotFound = errors.New("pipeline run not found")
 
-// PipelineRun 是一次 Pipeline 执行实例。PipelineID/VersionID/ScheduleID 在 v1
-// 控制面接入前可为空；诊断运行只用于验证 worker 协议。
+// PipelineRun 是一次 Pipeline 执行实例。诊断运行只用于验证 worker 协议。
 type PipelineRun struct {
-	ID           int64     `gorm:"primaryKey"`
-	PipelineID   *int64    `gorm:"index"`
-	VersionID    *int64    `gorm:"index"`
-	ScheduleID   *int64    `gorm:"index"`
-	PipelineName string    `gorm:"size:100"`
-	Status       string    `gorm:"size:20;index;not null"`
-	Trigger      string    `gorm:"size:20;not null"`
-	StartedAt    time.Time `gorm:"index"`
-	FinishedAt   *time.Time
-	ErrorSummary string `gorm:"size:1000"`
-	LogPath      string `gorm:"size:500"`
-	RetryAttempt int    `gorm:"not null;default:0"`
-	CreatedAt    time.Time
+	ID            int64     `gorm:"primaryKey"`
+	PipelineID    *int64    `gorm:"index"`
+	VersionID     *int64    `gorm:"index"`
+	ScheduleID    *int64    `gorm:"index"`
+	VersionNumber int       `gorm:"not null;default:0"`
+	PipelineName  string    `gorm:"size:100"`
+	Status        string    `gorm:"size:20;index;not null"`
+	Trigger       string    `gorm:"size:20;not null"`
+	StartedAt     time.Time `gorm:"index"`
+	FinishedAt    *time.Time
+	ReadRecords   int64  `gorm:"not null;default:0"`
+	WriteRecords  int64  `gorm:"not null;default:0"`
+	ReadBytes     int64  `gorm:"not null;default:0"`
+	ErrorSummary  string `gorm:"size:1000"`
+	LogPath       string `gorm:"size:500"`
+	RetryAttempt  int    `gorm:"not null;default:0"`
+	CreatedAt     time.Time
+}
+
+// PipelineRunFilter 是运行历史筛选条件。
+type PipelineRunFilter struct {
+	PipelineID int64
+	Status     string
+	Page       int
+	PageSize   int
 }
 
 // CreatePipelineRun 写入一次运行记录。
@@ -61,12 +74,69 @@ func (s *Store) GetPipelineRun(id int64) (PipelineRun, error) {
 
 // FinishPipelineRun 更新运行的终态。
 func (s *Store) FinishPipelineRun(id int64, status, errorSummary string) error {
+	return s.FinishPipelineRunDetails(id, status, errorSummary, 0, 0, 0)
+}
+
+// FinishPipelineRunDetails 更新终态与计数。
+func (s *Store) FinishPipelineRunDetails(id int64, status, errorSummary string, readRecords, writeRecords, readBytes int64) error {
 	now := time.Now()
 	return s.db.Model(&PipelineRun{}).Where("id = ?", id).Updates(map[string]any{
 		"status":        status,
 		"error_summary": errorSummary,
 		"finished_at":   now,
+		"read_records":  readRecords,
+		"write_records": writeRecords,
+		"read_bytes":    readBytes,
 	}).Error
+}
+
+// UpdatePipelineRunLogPath 记录运行日志文件位置。
+func (s *Store) UpdatePipelineRunLogPath(id int64, path string) error {
+	return s.db.Model(&PipelineRun{}).Where("id = ?", id).Update("log_path", path).Error
+}
+
+// ListPipelineRuns 返回运行历史与总数。
+func (s *Store) ListPipelineRuns(filter PipelineRunFilter) ([]PipelineRun, int64, error) {
+	query := s.db.Model(&PipelineRun{})
+	if filter.PipelineID > 0 {
+		query = query.Where("pipeline_id = ?", filter.PipelineID)
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	page := filter.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	var result []PipelineRun
+	err := query.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&result).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, total, nil
+}
+
+// HasActivePipelineRun reports whether a pipeline already has a running run.
+func (s *Store) HasActivePipelineRun(pipelineID int64) (bool, error) {
+	var count int64
+	err := s.db.Model(&PipelineRun{}).
+		Where("pipeline_id = ? AND status = ?", pipelineID, PipelineRunStatusRunning).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // MarkRunningPipelineRunsFailed 把服务重启后残留的运行标记为失败。

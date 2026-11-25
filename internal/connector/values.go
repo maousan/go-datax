@@ -127,9 +127,35 @@ func schemaEqual(left, right Schema) bool {
 		return false
 	}
 	for index := range left {
-		if !strings.EqualFold(left[index].Name, right[index].Name) || left[index].Type != right[index].Type {
+		leftName := strings.TrimSpace(left[index].Name)
+		rightName := strings.TrimSpace(right[index].Name)
+		if !strings.EqualFold(leftName, rightName) || left[index].Type != right[index].Type {
 			return false
 		}
 	}
 	return true
+}
+
+// estimateRowBytes returns a conservative memory estimate for backpressure.
+func estimateRowBytes(row []any) int64 {
+	var size int64
+	for _, value := range row {
+		switch typed := value.(type) {
+		case nil:
+		case string:
+			size += int64(len(typed))
+		case []byte:
+			size += int64(len(typed))
+		case time.Time:
+			size += 24
+		default:
+			size += 16
+		}
+	}
+	return size
+}
+
+// SchemasEqual reports whether two schemas have the same ordered columns.
+func SchemasEqual(left, right Schema) bool {
+	return schemaEqual(left, right)
 }

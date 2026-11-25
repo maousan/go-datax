@@ -211,8 +211,14 @@ func (m *runManager) Start(spec RunSpec) (string, error) {
 }
 
 func (m *runManager) execute(ctx context.Context, id string, spec RunSpec) {
-	m.publish(id, Event{Type: "log", Message: "diagnostic run started"})
 	m.setStatus(id, StatusRunning)
+	if spec.Pipeline != nil {
+		_, _ = RunPipeline(ctx, *spec.Pipeline, func(event Event) {
+			m.publish(id, event)
+		})
+		return
+	}
+	m.publish(id, Event{Type: "log", Message: "diagnostic run started"})
 	_, _ = RunDiagnostic(ctx, spec, discardSink{}, func(event Event) {
 		m.publish(id, event)
 	})
@@ -240,11 +246,13 @@ func (m *runManager) publish(id string, event Event) {
 	}
 	if event.Type == "progress" {
 		run.state.ReadRecords = event.ReadRecords
+		run.state.WriteRecords = event.WriteRecords
 		run.state.ReadBytes = event.ReadBytes
 	}
 	if event.Type == "done" {
 		run.state.Status = event.Status
 		run.state.ReadRecords = event.ReadRecords
+		run.state.WriteRecords = event.WriteRecords
 		run.state.ReadBytes = event.ReadBytes
 		run.state.Error = event.Error
 		run.state.Tasks = append([]TaskStats(nil), event.Tasks...)

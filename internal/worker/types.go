@@ -1,6 +1,10 @@
 package worker
 
-import "time"
+import (
+	"time"
+
+	"github.com/longkeyy/go-datax/internal/connector"
+)
 
 // RunStatus is the lifecycle state of a worker run.
 type RunStatus string
@@ -14,7 +18,7 @@ const (
 )
 
 // ProtocolVersion is bumped when the worker HTTP protocol changes incompatibly.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // ListenAddressPrefix is printed by etl-worker and parsed by etl-server.
 const ListenAddressPrefix = "etl-worker listening on "
@@ -24,13 +28,53 @@ func (s RunStatus) IsActive() bool {
 	return s == StatusQueued || s == StatusRunning
 }
 
-// RunSpec describes a diagnostic run accepted by the worker.
+// RunSpec describes work accepted by the worker. Pipeline is mutually exclusive
+// with the diagnostic Rows fields.
 type RunSpec struct {
-	Rows            int   `json:"rows"`
-	BatchSize       int   `json:"batchSize,omitempty"`
-	Splits          int   `json:"splits,omitempty"`
-	MaxBytes        int64 `json:"maxBytes,omitempty"`
-	DelayPerBatchMS int   `json:"delayPerBatchMs,omitempty"`
+	Rows            int           `json:"rows,omitempty"`
+	BatchSize       int           `json:"batchSize,omitempty"`
+	Splits          int           `json:"splits,omitempty"`
+	MaxBytes        int64         `json:"maxBytes,omitempty"`
+	DelayPerBatchMS int           `json:"delayPerBatchMs,omitempty"`
+	Pipeline        *PipelineSpec `json:"pipeline,omitempty"`
+}
+
+// PipelineSpec is one resolved linear source → sink execution.
+type PipelineSpec struct {
+	Source EndpointSpec `json:"source"`
+	Sink   EndpointSpec `json:"sink"`
+}
+
+// EndpointSpec is a resolved Source/Sink definition, including the DataSource
+// fields required by the worker. It carries no database identifiers.
+type EndpointSpec struct {
+	Name                 string            `json:"name"`
+	Connector            string            `json:"connector"`
+	DataSourceType       string            `json:"dataSourceType"`
+	JDBCUrl              string            `json:"jdbcUrl,omitempty"`
+	DataSourceProperties map[string]string `json:"dataSourceProperties,omitempty"`
+	Schema               connector.Schema  `json:"schema"`
+	Options              map[string]string `json:"options,omitempty"`
+}
+
+// Config converts the endpoint snapshot into a connector config.
+func (e EndpointSpec) Config() connector.Config {
+	properties := map[string]string{}
+	for key, value := range e.DataSourceProperties {
+		properties[key] = value
+	}
+	options := map[string]string{}
+	for key, value := range e.Options {
+		options[key] = value
+	}
+	return connector.Config{
+		Connector:            e.Connector,
+		DataSourceType:       e.DataSourceType,
+		JDBCUrl:              e.JDBCUrl,
+		DataSourceProperties: properties,
+		Schema:               e.Schema,
+		Options:              options,
+	}
 }
 
 // Batch is a unit of records moving from a producer to a sink.
@@ -49,25 +93,27 @@ type TaskStats struct {
 
 // Event is one SSE/JSON message emitted by a run.
 type Event struct {
-	Type        string      `json:"type"`
-	RunID       string      `json:"runId,omitempty"`
-	Message     string      `json:"message,omitempty"`
-	Status      RunStatus   `json:"status,omitempty"`
-	Percent     float64     `json:"percent,omitempty"`
-	ReadRecords int64       `json:"readRecords,omitempty"`
-	ReadBytes   int64       `json:"readBytes,omitempty"`
-	Error       string      `json:"error,omitempty"`
-	Tasks       []TaskStats `json:"tasks,omitempty"`
+	Type         string      `json:"type"`
+	RunID        string      `json:"runId,omitempty"`
+	Message      string      `json:"message,omitempty"`
+	Status       RunStatus   `json:"status,omitempty"`
+	Percent      float64     `json:"percent,omitempty"`
+	ReadRecords  int64       `json:"readRecords,omitempty"`
+	WriteRecords int64       `json:"writeRecords,omitempty"`
+	ReadBytes    int64       `json:"readBytes,omitempty"`
+	Error        string      `json:"error,omitempty"`
+	Tasks        []TaskStats `json:"tasks,omitempty"`
 }
 
 // RunState is the queryable state of a run.
 type RunState struct {
-	ID          string      `json:"id"`
-	Status      RunStatus   `json:"status"`
-	StartedAt   time.Time   `json:"startedAt"`
-	FinishedAt  *time.Time  `json:"finishedAt,omitempty"`
-	ReadRecords int64       `json:"readRecords"`
-	ReadBytes   int64       `json:"readBytes"`
-	Error       string      `json:"error,omitempty"`
-	Tasks       []TaskStats `json:"tasks,omitempty"`
+	ID           string      `json:"id"`
+	Status       RunStatus   `json:"status"`
+	StartedAt    time.Time   `json:"startedAt"`
+	FinishedAt   *time.Time  `json:"finishedAt,omitempty"`
+	ReadRecords  int64       `json:"readRecords"`
+	WriteRecords int64       `json:"writeRecords"`
+	ReadBytes    int64       `json:"readBytes"`
+	Error        string      `json:"error,omitempty"`
+	Tasks        []TaskStats `json:"tasks,omitempty"`
 }

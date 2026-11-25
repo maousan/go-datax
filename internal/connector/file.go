@@ -254,6 +254,7 @@ func (s *fileSource) ReadBatch(ctx context.Context, split Split) (Batch, error) 
 		}
 		s.row++
 		batch.Rows = append(batch.Rows, row)
+		batch.Bytes += estimateRowBytes(row)
 	}
 	if len(batch.Rows) == 0 {
 		return Batch{}, io.EOF

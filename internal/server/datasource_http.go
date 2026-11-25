@@ -161,6 +161,16 @@ func (s *Server) handleUpdateDataSource(w http.ResponseWriter, r *http.Request) 
 				"该数据源被 ETL 源或目标引用，不能修改类型")
 			return
 		}
+		versions, err := s.dataStore.PipelineVersionsUsingDataSource(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "检查 Pipeline 版本引用失败")
+			return
+		}
+		if len(versions) > 0 {
+			writeError(w, http.StatusConflict, "data_source_in_use",
+				"该数据源被已发布的 Pipeline 版本引用，不能修改类型")
+			return
+		}
 	}
 	if err := s.dataStore.UpdateDataSource(&merged); err != nil {
 		if errors.Is(err, store.ErrDuplicateDataSourceName) {
@@ -195,6 +205,11 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal_error", "检查源与目标引用失败")
 		return
 	}
+	versions, err := s.dataStore.PipelineVersionsUsingDataSource(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "检查 Pipeline 版本引用失败")
+		return
+	}
 	var groups []string
 	if len(names) > 0 || len(templates) > 0 {
 		var dataxParts []string
@@ -227,6 +242,9 @@ func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) 
 			etlParts = append(etlParts, "目标："+strings.Join(sinks, "、"))
 		}
 		groups = append(groups, "ETL 区："+strings.Join(etlParts, "；"))
+	}
+	if len(versions) > 0 {
+		groups = append(groups, fmt.Sprintf("Pipeline 区：%d 个已发布版本", len(versions)))
 	}
 	if len(groups) > 0 {
 		// Pipeline 版本保存 Source/Sink 快照，不阻塞删除。

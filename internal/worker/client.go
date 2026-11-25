@@ -57,7 +57,7 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
-// StartRun submits a diagnostic run and returns its id.
+// StartRun submits a diagnostic or pipeline run and returns its id.
 func (c *Client) StartRun(ctx context.Context, spec RunSpec) (string, error) {
 	payload, err := json.Marshal(spec)
 	if err != nil {
