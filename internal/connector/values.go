@@ -18,6 +18,16 @@ func coerceValue(value any, dataType DataType) (any, error) {
 			return typed, nil
 		case int:
 			return int64(typed), nil
+		case uint:
+			return uintToInt64(uint64(typed))
+		case uint8:
+			return int64(typed), nil
+		case uint16:
+			return int64(typed), nil
+		case uint32:
+			return int64(typed), nil
+		case uint64:
+			return uintToInt64(typed)
 		case float64:
 			if typed != float64(int64(typed)) {
 				return nil, fmt.Errorf("cannot convert %v to int64", typed)
@@ -35,6 +45,8 @@ func coerceValue(value any, dataType DataType) (any, error) {
 		case float64:
 			return typed, nil
 		case int64:
+			return float64(typed), nil
+		case uint64:
 			return float64(typed), nil
 		case []byte:
 			return strconv.ParseFloat(string(typed), 64)
@@ -101,6 +113,13 @@ func coerceValue(value any, dataType DataType) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported type %q", dataType)
 	}
+}
+
+func uintToInt64(value uint64) (int64, error) {
+	if value > 1<<63-1 {
+		return 0, fmt.Errorf("value %d overflows int64", value)
+	}
+	return int64(value), nil
 }
 
 func parseTimestamp(raw string) (time.Time, error) {

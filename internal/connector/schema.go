@@ -129,6 +129,8 @@ type Config struct {
 	Connector            string
 	DataSourceType       string
 	JDBCUrl              string
+	Username             string
+	Password             string
 	DataSourceProperties map[string]string
 	Schema               Schema
 	Options              map[string]string

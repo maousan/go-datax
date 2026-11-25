@@ -18,12 +18,31 @@ type descriptor struct {
 }
 
 var registry = map[string]descriptor{
+	"mysql": {
+		dataSourceType: "mysql",
+		newSource:      func(cfg Config) (Source, error) { return newSQLSource(cfg, mysqlDialect) },
+		newSink:        func(cfg Config) (Sink, error) { return newSQLSink(cfg, mysqlDialect) },
+		discover:       func(ctx context.Context, cfg Config) (Schema, error) { return discoverSQL(ctx, cfg, mysqlDialect) },
+		validate:       func(cfg Config) error { return validateSQLConnector(cfg, mysqlDialect) },
+		validateSource: func(cfg Config) error { return validateSQLSource(cfg, mysqlDialect) },
+		validateSink:   func(cfg Config) error { return validateSQLSink(cfg, mysqlDialect) },
+	},
+	"postgres": {
+		dataSourceType: "postgres",
+		newSource:      func(cfg Config) (Source, error) { return newSQLSource(cfg, postgresDialect) },
+		newSink:        func(cfg Config) (Sink, error) { return newSQLSink(cfg, postgresDialect) },
+		discover:       func(ctx context.Context, cfg Config) (Schema, error) { return discoverSQL(ctx, cfg, postgresDialect) },
+		validate:       func(cfg Config) error { return validateSQLConnector(cfg, postgresDialect) },
+		validateSource: func(cfg Config) error { return validateSQLSource(cfg, postgresDialect) },
+		validateSink:   func(cfg Config) error { return validateSQLSink(cfg, postgresDialect) },
+	},
 	"sqlite": {
 		dataSourceType: "sqlite",
-		newSource:      newSQLiteSource,
-		newSink:        newSQLiteSink,
+		newSource:      func(cfg Config) (Source, error) { return newSQLSource(cfg, sqliteDialect) },
+		newSink:        func(cfg Config) (Sink, error) { return newSQLSink(cfg, sqliteDialect) },
 		discover:       discoverSQLite,
 		validate:       validateSQLite,
+		validateSource: func(cfg Config) error { return validateSQLSource(cfg, sqliteDialect) },
 		validateSink:   validateSQLiteSink,
 	},
 	"csv": {

@@ -5,16 +5,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
 	_ "github.com/glebarez/go-sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/sijms/go-ora/v2"
 
+	"github.com/longkeyy/go-datax/internal/dbdsn"
 	"github.com/longkeyy/go-datax/internal/oracledsn"
 	"github.com/longkeyy/go-datax/internal/sqlserverdsn"
 )
@@ -115,9 +115,17 @@ func queryVersion(ctx context.Context, db *sql.DB, driver string) string {
 func buildDSN(params Params) (string, string, error) {
 	switch strings.ToLower(params.Type) {
 	case "mysql":
-		return buildMySQLDSN(params)
+		dsn, err := dbdsn.MySQL(params.JDBCUrl, params.Username, params.Password, testTimeout)
+		if err != nil {
+			return "", "", err
+		}
+		return "mysql", dsn, nil
 	case "postgres":
-		return buildPostgresDSN(params)
+		dsn, err := dbdsn.Postgres(params.JDBCUrl, params.Username, params.Password, testTimeout)
+		if err != nil {
+			return "", "", err
+		}
+		return "pgx", dsn, nil
 	case "sqlite":
 		return "sqlite", sqliteReadOnlyDSN(strings.TrimPrefix(params.JDBCUrl, "jdbc:sqlite:")), nil
 	case "mssql":
@@ -140,77 +148,4 @@ func buildDSN(params Params) (string, string, error) {
 // sqliteReadOnlyDSN 以只读方式打开，避免连接测试创建任意路径的文件。
 func sqliteReadOnlyDSN(path string) string {
 	return "file:" + strings.ReplaceAll(path, "\\", "/") + "?mode=ro"
-}
-
-func buildMySQLDSN(params Params) (string, string, error) {
-	raw := strings.TrimPrefix(params.JDBCUrl, "jdbc:mysql://")
-	parsed, err := url.Parse("mysql://" + raw)
-	if err != nil || parsed.Host == "" {
-		return "", "", fmt.Errorf("无效的 MySQL 连接地址: %s", params.JDBCUrl)
-	}
-
-	cfg := mysqldriver.NewConfig()
-	cfg.User = params.Username
-	cfg.Passwd = params.Password
-	cfg.Net = "tcp"
-	cfg.Addr = parsed.Host
-	cfg.DBName = strings.TrimPrefix(parsed.Path, "/")
-	cfg.Timeout = testTimeout
-	cfg.ReadTimeout = testTimeout
-	cfg.WriteTimeout = testTimeout
-
-	// JDBC 参数不能直接传给 go-sql-driver（会被当作系统变量执行），
-	// 连接测试只关心 TLS 语义，其余参数忽略。
-	for key, values := range parsed.Query() {
-		if len(values) == 0 {
-			continue
-		}
-		switch strings.ToLower(key) {
-		case "usessl", "ssl":
-			if strings.EqualFold(values[0], "true") {
-				cfg.TLSConfig = "skip-verify"
-			}
-		case "sslmode":
-			switch strings.ToLower(values[0]) {
-			case "require", "verify-ca", "verify-full", "preferred":
-				cfg.TLSConfig = "skip-verify"
-			}
-		}
-	}
-
-	return "mysql", cfg.FormatDSN(), nil
-}
-
-func buildPostgresDSN(params Params) (string, string, error) {
-	raw := strings.TrimPrefix(params.JDBCUrl, "jdbc:postgresql://")
-	parsed, err := url.Parse("postgres://" + raw)
-	if err != nil || parsed.Host == "" {
-		return "", "", fmt.Errorf("无效的 PostgreSQL 连接地址: %s", params.JDBCUrl)
-	}
-
-	if params.Username != "" {
-		parsed.User = url.UserPassword(params.Username, params.Password)
-	}
-
-	// 只映射 pgx 认识的参数，避免 JDBC 专有参数导致连接失败。
-	mapped := url.Values{}
-	for key, values := range parsed.Query() {
-		if len(values) == 0 {
-			continue
-		}
-		switch strings.ToLower(key) {
-		case "ssl":
-			if strings.EqualFold(values[0], "true") {
-				mapped.Set("sslmode", "require")
-			}
-		case "sslmode":
-			mapped.Set("sslmode", values[0])
-		case "currentschema":
-			mapped.Set("search_path", values[0])
-		}
-	}
-	mapped.Set("connect_timeout", "5")
-	parsed.RawQuery = mapped.Encode()
-
-	return "pgx", parsed.String(), nil
 }

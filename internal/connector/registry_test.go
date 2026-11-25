@@ -6,7 +6,7 @@ import (
 )
 
 func TestSupportedConnectors(t *testing.T) {
-	expected := []string{"csv", "jsonl", "sqlite", "txt"}
+	expected := []string{"csv", "jsonl", "mysql", "postgres", "sqlite", "txt"}
 	if got := Supported(); !reflect.DeepEqual(got, expected) {
 		t.Fatalf("Supported() = %v, want %v", got, expected)
 	}

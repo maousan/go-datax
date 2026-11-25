@@ -214,3 +214,10 @@ func TestNormalizePipelineSpecRejectsUnknownTransformLibrary(t *testing.T) {
 		t.Fatalf("library version = %d, want %d", normalized.TransformLibraryVersion, transform.FunctionLibraryVersion)
 	}
 }
+
+func TestEndpointSpecConfigCarriesCredentials(t *testing.T) {
+	cfg := EndpointSpec{Connector: "mysql", DataSourceType: "mysql", Username: "app_user", Password: "secret"}.Config()
+	if cfg.Username != "app_user" || cfg.Password != "secret" {
+		t.Fatalf("config credentials = %q/%q", cfg.Username, cfg.Password)
+	}
+}

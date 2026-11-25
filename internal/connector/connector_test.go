@@ -61,3 +61,15 @@ func sampleSchema() Schema {
 		{Name: "created", Type: TypeTimestamp},
 	}
 }
+
+func TestCoerceUintValues(t *testing.T) {
+	if value, err := CoerceValue(uint64(42), TypeInt64); err != nil || value != int64(42) {
+		t.Fatalf("uint64 -> int64 = %#v, %v", value, err)
+	}
+	if _, err := CoerceValue(uint64(1<<63), TypeInt64); err == nil {
+		t.Fatal("uint64 overflow was accepted")
+	}
+	if value, err := CoerceValue(uint64(42), TypeFloat64); err != nil || value != float64(42) {
+		t.Fatalf("uint64 -> float64 = %#v, %v", value, err)
+	}
+}

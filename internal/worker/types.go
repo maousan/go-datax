@@ -49,12 +49,15 @@ type PipelineSpec struct {
 }
 
 // EndpointSpec is a resolved Source/Sink definition, including the DataSource
-// fields required by the worker. It carries no database identifiers.
+// fields required by the worker. It carries no database identifiers. Username
+// and Password must never be logged or persisted.
 type EndpointSpec struct {
 	Name                 string            `json:"name"`
 	Connector            string            `json:"connector"`
 	DataSourceType       string            `json:"dataSourceType"`
 	JDBCUrl              string            `json:"jdbcUrl,omitempty"`
+	Username             string            `json:"username,omitempty"`
+	Password             string            `json:"password,omitempty"`
 	DataSourceProperties map[string]string `json:"dataSourceProperties,omitempty"`
 	Schema               connector.Schema  `json:"schema"`
 	Options              map[string]string `json:"options,omitempty"`
@@ -74,6 +77,8 @@ func (e EndpointSpec) Config() connector.Config {
 		Connector:            e.Connector,
 		DataSourceType:       e.DataSourceType,
 		JDBCUrl:              e.JDBCUrl,
+		Username:             e.Username,
+		Password:             e.Password,
 		DataSourceProperties: properties,
 		Schema:               e.Schema,
 		Options:              options,
